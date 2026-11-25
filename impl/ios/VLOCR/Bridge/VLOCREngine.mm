@@ -136,11 +136,9 @@ static char *VLOCRRemoteCallback(const uint8_t *rgb, int width, int height,
         }
 
         NSString *promptText = prompt != nullptr ? [NSString stringWithUTF8String:prompt] : @"OCR:";
-        NSDictionary *imagePart = @{
-            @"type": @"image_url",
-            @"image_url": @{@"url": [@"data:image/jpeg;base64,"
-                                     stringByAppendingString:[jpeg base64EncodedString]]},
-        };
+        NSString *dataURL = [@"data:image/jpeg;base64,"
+            stringByAppendingString:[jpeg base64EncodedStringWithOptions:0]];
+        NSDictionary *imagePart = @{@"type": @"image_url", @"image_url": @{@"url": dataURL}};
         NSDictionary *textPart = @{@"type": @"text", @"text": promptText ?: @"OCR:"};
         NSDictionary *message = @{@"role": @"user", @"content": @[imagePart, textPart]};
         NSDictionary *body = @{
@@ -191,7 +189,7 @@ static char *VLOCRRemoteCallback(const uint8_t *rgb, int width, int height,
             if (error != nullptr) *error = strdup("远程服务返回结构不符合 OpenAI 兼容格式。");
             return nullptr;
         }
-        return strdup(content.UTF8String);
+        return strdup([(NSString *)content UTF8String]);
     }
 }
 
