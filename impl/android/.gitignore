@@ -1,0 +1,16 @@
+# 构建产物
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+
+# 外部依赖（由 scripts/ 拉取，不入库）
+app/src/main/cpp/llama.cpp/
+app/src/main/cpp/onnxruntime/
+
+# IDE
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/

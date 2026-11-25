@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 拍照原图落盘位置（供 TakePicture 写入） -->
+    <cache-path name="camera" path="camera/" />
+</paths>

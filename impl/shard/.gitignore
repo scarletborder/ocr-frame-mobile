@@ -1,0 +1,4 @@
+# 桌面单测构建目录
+.build/
+build/
+build-shard/

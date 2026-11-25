@@ -1,0 +1,101 @@
+name: iOS IPA (unsigned)
+
+# 在 macOS runner 上产出**未签名** .ipa，交给 Windows 侧 Sideloadly / AltStore
+# 用 Apple ID 重签安装（不需要 Xcode，也不需要证书）。
+#
+# 触发：Actions 页面手动运行（可关掉本地 VLM 引擎），或改动 impl/ios、impl/shard 时。
+# 成本提示：私有仓库的 macOS runner 按 10 倍分钟计费；本地 VLM 引擎首次构建约 10–20 分钟，
+#          之后命中缓存。
+
+on:
+  workflow_dispatch:
+    inputs:
+      with_llama:
+        description: "构建本地 VLM 引擎（llama.cpp）。关闭则产物只能走「远程服务」模式"
+        type: boolean
+        default: true
+  push:
+    branches: [main, master]
+    paths:
+      - "impl/ios/**"
+      - "impl/shard/**"
+      - ".github/workflows/ios-ipa.yml"
+
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      LLAMA_REF: master
+      # 想强制重建 llama.xcframework（例如上游 mtmd API 变了），把这个 key 改一下
+      LLAMA_CACHE_KEY: llama-master-v1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 工具与版本
+        run: |
+          xcodebuild -version
+          cmake --version | head -1
+          brew install xcodegen
+          xcodegen --version
+
+      - name: 缓存 llama.cpp 源码
+        if: ${{ inputs.with_llama != false }}
+        uses: actions/cache@v4
+        with:
+          path: impl/ios/.build/llama.cpp
+          key: ${{ env.LLAMA_CACHE_KEY }}-src
+
+      - name: 缓存 llama.xcframework
+        id: llama-framework
+        if: ${{ inputs.with_llama != false }}
+        uses: actions/cache@v4
+        with:
+          path: impl/ios/Frameworks/llama.xcframework
+          key: ${{ env.LLAMA_CACHE_KEY }}-xcframework-${{ runner.arch }}
+
+      - name: 版面引擎（ONNX Runtime）
+        run: bash impl/ios/scripts/fetch-onnxruntime.sh
+
+      - name: 本地 VLM 引擎（llama.cpp + libmtmd）
+        if: ${{ inputs.with_llama != false && steps.llama-framework.outputs.cache-hit != 'true' }}
+        env:
+          LLAMA_PLATFORMS: ios-device
+        run: bash impl/ios/scripts/build-llama-xcframework.sh
+
+      - name: 生成 Xcode 工程
+        run: |
+          cd impl/ios
+          if [ -d Frameworks/llama.xcframework ]; then
+            xcodegen generate
+          else
+            bash scripts/bootstrap.sh --no-llama
+          fi
+
+      - name: 打包未签名 ipa
+        run: bash impl/ios/scripts/package-ipa.sh
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: VLOCR-unsigned-ipa
+          path: impl/ios/build/VLOCR-unsigned.ipa
+          retention-days: 30
+          if-no-files-found: error
+
+      # 本地没有 Mac 时，编译日志只能在 CI 里看：失败时一并上传，便于逐条修
+      - name: 上传编译日志（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: |
+            impl/ios/build/xcodebuild.log
+            impl/ios/build/VLOCR.xcarchive
+          retention-days: 7
+          if-no-files-found: warn
