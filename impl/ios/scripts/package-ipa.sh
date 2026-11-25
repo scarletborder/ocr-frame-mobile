@@ -51,12 +51,32 @@ echo "==> 校验产物"
 lipo -archs "${OUT}/Payload/VLOCR.app/VLOCR"
 if [ -d "${OUT}/Payload/VLOCR.app/Frameworks" ]; then
   ls "${OUT}/Payload/VLOCR.app/Frameworks"
+
   # 动态框架若没被 embed，装到手机上会 dyld 崩溃，这里提前拦住
   if [ ! -d "${OUT}/Payload/VLOCR.app/Frameworks/llama.framework" ] && \
      [ -d "${ROOT}/Frameworks/llama.xcframework" ]; then
     echo "!! 工程引用了 llama.xcframework，但 .app 里没有 llama.framework（Embed 未生效）" >&2
     exit 1
   fi
+
+  # 动态库型 xcframework（ONNX Runtime 的 GitHub 镜像就是这种）install_name 常带版本号
+  # （@rpath/libonnxruntime.1.22.0.dylib），而嵌入的文件名可能是 libonnxruntime.dylib。
+  # 名字对不上会在设备上 dyld 报 "Library not loaded"，这里按 install_name 补齐副本。
+  FRAMEWORKS_DIR="${OUT}/Payload/VLOCR.app/Frameworks"
+  for dylib in "${FRAMEWORKS_DIR}"/*.dylib; do
+    [ -e "${dylib}" ] || continue
+    install_name="$(otool -D "${dylib}" 2>/dev/null | tail -1)"
+    [ -n "${install_name}" ] || continue
+    case "${install_name}" in
+      @rpath/*|@loader_path/*|@executable_path/*) ;;
+      *) continue ;;
+    esac
+    wanted="$(basename "${install_name}")"
+    if [ ! -e "${FRAMEWORKS_DIR}/${wanted}" ]; then
+      echo "    补齐 ${wanted}（install_name 指向它，但嵌入的文件名是 $(basename "${dylib}")）"
+      cp "${dylib}" "${FRAMEWORKS_DIR}/${wanted}"
+    fi
+  done
 fi
 
 echo "==> 打包 ipa"

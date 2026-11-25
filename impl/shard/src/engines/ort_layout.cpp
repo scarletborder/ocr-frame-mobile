@@ -7,18 +7,25 @@
 //   检测输出     [N,7] float32          [class_id, score, x1, y1, x2, y2, order_key]
 #include "vlcore/engines.hpp"
 
-// 引擎可用性自动探测：iOS 的 xcframework 头在 <onnxruntime/…>，Android 的 AAR 头是平铺的
-// <onnxruntime_c_api.h>；两者都存在时才编译推理路径，否则退化为「工厂返回 nullptr」。
+// 引擎可用性自动探测。ONNX Runtime 的 iOS 二进制有三种打包形态，头文件路径各不相同：
+//   1. 静态 framework（官方 pod archive）：<onnxruntime/onnxruntime_c_api.h>
+//   2. 动态 library 型 xcframework：      <onnxruntime/core/session/onnxruntime_c_api.h>
+//   3. Android AAR 平铺头：               <onnxruntime_c_api.h>
+// 任意一种存在即编译推理路径，否则退化为「工厂返回 nullptr」。
 #if defined(VLCORE_WITH_ORT)
 #define VLCORE_ORT_ENABLED 1
 #elif !defined(VLCORE_WITHOUT_ORT) && \
-    (__has_include(<onnxruntime/onnxruntime_c_api.h>) || __has_include(<onnxruntime_c_api.h>))
+    (__has_include(<onnxruntime/onnxruntime_c_api.h>) || \
+     __has_include(<onnxruntime/core/session/onnxruntime_c_api.h>) || \
+     __has_include(<onnxruntime_c_api.h>))
 #define VLCORE_ORT_ENABLED 1
 #endif
 
 #if defined(VLCORE_ORT_ENABLED)
 #if __has_include(<onnxruntime/onnxruntime_c_api.h>)
 #include <onnxruntime/onnxruntime_c_api.h>
+#elif __has_include(<onnxruntime/core/session/onnxruntime_c_api.h>)
+#include <onnxruntime/core/session/onnxruntime_c_api.h>
 #else
 #include <onnxruntime_c_api.h>
 #endif

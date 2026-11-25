@@ -32,7 +32,7 @@ bash impl/ios/scripts/package-ipa.sh                  # xcodebuild archive（不
 ```
 
 > 想强制重建 llama 引擎（例如上游 `mtmd` API 变了）：把工作流里的
-> `LLAMA_CACHE_KEY` 改个后缀再跑。
+> `LLAMA_CACHE_KEY` 改个后缀再跑；换 ONNX Runtime 来源/形态时改 `ORT_CACHE_KEY`。
 
 ## 2. 路线 B：借一台 Mac 出 ipa
 
@@ -49,6 +49,12 @@ bash scripts/package-ipa.sh        # → build/VLOCR-unsigned.ipa
 
 全程不需要 Apple ID、不需要证书、不需要 `DEVELOPMENT_TEAM`（脚本显式传
 `CODE_SIGNING_ALLOWED=NO`）。把 `build/VLOCR-unsigned.ipa` 拷回 Windows 即可。
+
+> `fetch-onnxruntime.sh` 会按顺序试三个来源：自定义 URL → 官方 pod-archive →
+> GitHub 上的 1.22.0 镜像（钉 SHA256）。官方域名 `download.onnxruntime.ai` 在
+> GitHub Actions 上返回的证书与域名不匹配，必然落到镜像；脚本会打印实际来源与包形态
+> （`static-framework` 或 `dynamic`）。内网/离线兜底：
+> `ONNXRUNTIME_XCFRAMEWORK_URL=... ONNXRUNTIME_XCFRAMEWORK_SHA256=... bash scripts/fetch-onnxruntime.sh`。
 
 > 顺带说明：如果这台 Mac 就想直接装机，也可以填 `project.yml` 的 `DEVELOPMENT_TEAM`
 > 后用 Xcode `Cmd+R`，与本路线不冲突。

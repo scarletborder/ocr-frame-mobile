@@ -43,6 +43,12 @@ targets:
         HEADER_SEARCH_PATHS:
           - $(inherited)
           - $(PROJECT_DIR)/../shard/include
+          # onnxruntime 有两种打包形态：library 型 xcframework 的头在切片 Headers/ 下，
+          # framework 型的头由 <onnxruntime/…> 直接解析。两条都加上，缺的路径无害。
+          - $(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64/Headers
+          - $(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64-simulator/Headers
+          - $(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64/onnxruntime.framework/Headers
+          - $(PROJECT_DIR)/Frameworks/onnxruntime.xcframework/ios-arm64-simulator/onnxruntime.framework/Headers
         FRAMEWORK_SEARCH_PATHS:
           - $(inherited)
           - $(PROJECT_DIR)/Frameworks
@@ -58,8 +64,11 @@ targets:
         #     否则每次 xcodegen 重新生成工程都会丢掉在 Xcode UI 里选的 Team。
         DEVELOPMENT_TEAM: ""
     dependencies:
+      # 官方 pod-archive 是静态 framework，GitHub 上的 1.22.0 镜像是动态 dylib 型 xcframework。
+      # 统一 embed：动态包必须嵌入才能启动；静态包被嵌入只是多占体积（sideload 场景无副作用）。
       - framework: Frameworks/onnxruntime.xcframework
-        embed: false
+        embed: true
+        codeSign: true
       - framework: Frameworks/llama.xcframework
         embed: true
         codeSign: true

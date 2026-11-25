@@ -33,6 +33,8 @@ jobs:
       LLAMA_REF: master
       # 想强制重建 llama.xcframework（例如上游 mtmd API 变了），把这个 key 改一下
       LLAMA_CACHE_KEY: llama-master-v1
+      # ONNX Runtime 包形态/来源变化时同样改这个 key
+      ORT_CACHE_KEY: ort-1.22.0-v1
 
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +61,15 @@ jobs:
           path: impl/ios/Frameworks/llama.xcframework
           key: ${{ env.LLAMA_CACHE_KEY }}-xcframework-${{ runner.arch }}
 
+      - name: 缓存 onnxruntime.xcframework
+        id: ort-framework
+        uses: actions/cache@v4
+        with:
+          path: impl/ios/Frameworks/onnxruntime.xcframework
+          key: ${{ env.ORT_CACHE_KEY }}
+
       - name: 版面引擎（ONNX Runtime）
+        if: steps.ort-framework.outputs.cache-hit != 'true'
         run: bash impl/ios/scripts/fetch-onnxruntime.sh
 
       - name: 本地 VLM 引擎（llama.cpp + libmtmd）
@@ -68,14 +78,9 @@ jobs:
           LLAMA_PLATFORMS: ios-device
         run: bash impl/ios/scripts/build-llama-xcframework.sh
 
+      # bootstrap 负责：缺 llama 时生成不带该依赖的 spec、以及 xcodegen 生成工程
       - name: 生成 Xcode 工程
-        run: |
-          cd impl/ios
-          if [ -d Frameworks/llama.xcframework ]; then
-            xcodegen generate
-          else
-            bash scripts/bootstrap.sh --no-llama
-          fi
+        run: bash impl/ios/scripts/bootstrap.sh
 
       - name: 打包未签名 ipa
         run: bash impl/ios/scripts/package-ipa.sh
@@ -89,13 +94,12 @@ jobs:
           if-no-files-found: error
 
       # 本地没有 Mac 时，编译日志只能在 CI 里看：失败时一并上传，便于逐条修
+      # （只传日志，不上传 xcarchive：含全部符号与框架，几百 MB，下载很慢）
       - name: 上传编译日志（失败时）
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: xcodebuild-log
-          path: |
-            impl/ios/build/xcodebuild.log
-            impl/ios/build/VLOCR.xcarchive
+          path: impl/ios/build/xcodebuild.log
           retention-days: 7
           if-no-files-found: warn
