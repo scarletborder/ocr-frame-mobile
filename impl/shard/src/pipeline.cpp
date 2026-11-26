@@ -106,11 +106,13 @@ bool Pipeline::Run(const RgbBuffer& page, const std::function<void(int, int)>& p
 
         if (!ShouldRecognize(block.label)) {
             block.recognized = false;
+            block.error = "该标签在本预设下不送视觉模型（插图或已关闭的专项识别）";
             continue;
         }
         const RgbBuffer crop = CropRgb(page, block.box);
         if (!crop.Valid()) {
             block.recognized = false;
+            block.error = "版面块裁剪失败（框越界或尺寸为零）";
             continue;
         }
 
@@ -120,8 +122,10 @@ bool Pipeline::Run(const RgbBuffer& page, const std::function<void(int, int)>& p
             block.text = text;
             block.recognized = true;
         } else {
-            // 单块失败只标记未识别，保留标签与几何，避免整页失败。
+            // 单块失败只标记未识别，保留标签与几何，避免整页失败；
+            // 但原因必须带出去，否则端上只能看到「未识别」而无法定位。
             block.recognized = false;
+            block.error = block_error.empty() ? "识别失败（无详细信息）" : block_error;
         }
     }
 

@@ -130,8 +130,9 @@ public:
 
         llama_context_params ctx_params = llama_context_default_params();
         ctx_params.n_ctx = static_cast<uint32_t>(std::max(2048, n_ctx));
-        // 动态分辨率视觉编码器单块可产出上千 token，n_batch 必须覆盖它。
-        ctx_params.n_batch = 2048;
+        // 动态分辨率视觉编码器单块可产出上千 token（image_max_tokens=2048），
+        // 再叠加提示词 token，n_batch 必须留出余量，否则 llama_decode 直接报错。
+        ctx_params.n_batch = 4096;
         ctx_params.n_ubatch = 512;
         ctx_params.n_threads = std::max(1, n_threads);
         ctx_params.n_threads_batch = std::max(1, n_threads);
@@ -142,14 +143,27 @@ public:
         }
         vocab_ = llama_model_get_vocab(model_);
 
-        mtmd_context_params mtmd_params = mtmd_context_params_default();
-        mtmd_params.use_gpu = true;
-        mtmd_params.print_timings = false;
-        mtmd_params.n_threads = std::max(1, n_threads);
-        mtmd_params.warmup = true;
+        mmproj_path_ = mmproj_path;
+        threads_ = std::max(1, n_threads);
+        return InitMtmd(true, error);
+    }
+
+    /// 视觉编码器后端可以重建：Metal 对某些视觉塔（如 PaddleOCR-VL 的 NaViT）支持不全时，
+    /// encode 会整块失败，此时退回 CPU 重跑一次，而不是把整页所有块都判成未识别。
+    bool InitMtmd(bool use_gpu, std::string* error) {
+        if (mtmd_ != nullptr) {
+            mtmd_free(mtmd_);
+            mtmd_ = nullptr;
+        }
+        mtmd_context_params params = mtmd_context_params_default();
+        params.use_gpu = use_gpu;
+        params.print_timings = false;
+        params.n_threads = threads_;
+        params.warmup = use_gpu;   // CPU 回退时跳过预热，避免额外耗时
         // 移动端把单块视觉 token 上限定在 2048，避免单块编码时间和内存失控。
-        mtmd_params.image_max_tokens = 2048;
-        mtmd_ = mtmd_init_from_file(mmproj_path.c_str(), model_, mtmd_params);
+        params.image_max_tokens = 2048;
+
+        mtmd_ = mtmd_init_from_file(mmproj_path_.c_str(), model_, params);
         if (mtmd_ == nullptr) {
             SetError(error, "视觉投影器加载失败，请确认 -mmproj.gguf 与主权重版本一致。");
             return false;
@@ -158,6 +172,7 @@ public:
             SetError(error, "所选模型不支持图像输入。");
             return false;
         }
+        using_gpu_ = use_gpu;
         return true;
     }
 
@@ -198,11 +213,24 @@ public:
                 break;
             }
 
-            llama_memory_clear(llama_get_memory(ctx_), true);
+            const auto evaluate = [&](llama_pos* n_past) {
+                llama_memory_clear(llama_get_memory(ctx_), true);
+                *n_past = 0;
+                return EvalChunks(mtmd_, ctx_, chunks, n_past);
+            };
 
             llama_pos n_past = 0;
-            if (!EvalChunks(mtmd_, ctx_, chunks, &n_past)) {
-                SetError(error, "提示词推理失败（上下文长度或显存不足）。");
+            bool evaluated = evaluate(&n_past);
+            if (!evaluated && using_gpu_) {
+                // GPU 视觉编码失败 → 退回 CPU 重建 mtmd 再试一次（chunks 只含 token 序列，可复用）
+                std::string retry_error;
+                if (InitMtmd(false, &retry_error)) {
+                    evaluated = evaluate(&n_past);
+                }
+            }
+            if (!evaluated) {
+                SetError(error, using_gpu_ ? "视觉编码/提示词推理失败（GPU 与 CPU 都失败，可能是显存不足或模型不匹配）。"
+                                           : "提示词推理失败（上下文长度或显存不足）。");
                 break;
             }
 
@@ -249,6 +277,9 @@ private:
     llama_context* ctx_{nullptr};
     mtmd_context* mtmd_{nullptr};
     const llama_vocab* vocab_{nullptr};
+    std::string mmproj_path_;
+    int threads_{4};
+    bool using_gpu_{false};
     std::mutex mutex_;
 };
 

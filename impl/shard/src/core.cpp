@@ -331,8 +331,12 @@ std::string RenderMarkdown(const std::vector<Block>& blocks) {
         if (IsMarkdownIgnored(block.label)) continue;
 
         if (!block.recognized) {
-            if (!out.empty()) out += "\n\n";
-            out += "![](block-" + std::to_string(block.order > 0 ? block.order : 0) + ")";
+            // 只有真正的插图类才输出占位图。识别失败的文本块如果也输出 ![]，
+            // 会把「文字没识别出来」误报成「这里是一张图」——正是线上看到的现象。
+            if (RegionType(block.label) == "image") {
+                if (!out.empty()) out += "\n\n";
+                out += "![](block-" + std::to_string(block.order > 0 ? block.order : 0) + ")";
+            }
             continue;
         }
 
@@ -389,6 +393,7 @@ std::string BlocksToJson(const std::vector<Block>& blocks) {
         out += ",\"text\":\"" + EscapeJson(block.text) + "\"";
         out += ",\"recognized\":";
         out += block.recognized ? "true" : "false";
+        out += ",\"error\":\"" + EscapeJson(block.error) + "\"";
         out += "}";
     }
     out += "]";

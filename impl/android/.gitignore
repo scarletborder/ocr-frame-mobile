@@ -8,6 +8,7 @@ local.properties
 # 外部依赖（由 scripts/ 拉取，不入库）
 app/src/main/cpp/llama.cpp/
 app/src/main/cpp/onnxruntime/
+app/src/main/jniLibs/
 
 # IDE
 .idea/

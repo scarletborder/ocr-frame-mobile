@@ -34,12 +34,32 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace vlcore {
 namespace {
 
 void SetError(std::string* error, const std::string& message) {
     if (error != nullptr) *error = message;
 }
+
+#if defined(_WIN32)
+/// ONNX Runtime 在 Windows 上把 ORTCHAR_T 定义成 wchar_t，路径必须转成 UTF-16。
+std::wstring ToOrtPath(const std::string& path) {
+    if (path.empty()) return std::wstring();
+    const int length = static_cast<int>(path.size());
+    const int size = ::MultiByteToWideChar(CP_UTF8, 0, path.c_str(), length, nullptr, 0);
+    if (size <= 0) return std::wstring();
+    std::wstring wide(static_cast<size_t>(size), L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, path.c_str(), length, wide.data(), size);
+    return wide;
+}
+#endif
 
 #if defined(VLCORE_ORT_ENABLED)
 
@@ -67,7 +87,12 @@ public:
         if (!Ok(api_, api_->CreateSessionOptions(&options_), error)) return false;
         api_->SetIntraOpNumThreads(options_, 4);
         api_->SetSessionGraphOptimizationLevel(options_, ORT_ENABLE_ALL);
+#if defined(_WIN32)
+        const std::wstring wide_path = ToOrtPath(path);
+        if (!Ok(api_, api_->CreateSession(env_, wide_path.c_str(), options_, &session_), error)) return false;
+#else
         if (!Ok(api_, api_->CreateSession(env_, path.c_str(), options_, &session_), error)) return false;
+#endif
         if (!Ok(api_, api_->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_), error)) return false;
         return ReadIoSpec(error);
     }

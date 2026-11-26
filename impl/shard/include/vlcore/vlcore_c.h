@@ -52,6 +52,10 @@ char *vlcore_recognize_block(vlcore_engine_t *engine, const uint8_t *rgb, int wi
 /* 官方提示词（"OCR:" 等），平台侧不需要自己维护标签表。 */
 char *vlcore_prompt_for_label(const char *label);
 
+/* 标签的区域类型（text / heading / subheading / caption / table / image / ...），
+ * 供 UI 分组与叠加层使用，避免端上再抄一份标签表。 */
+char *vlcore_region_type(const char *label);
+
 /* 该引擎是否编译进本次构建（区分「没选模型」与「没链接库」）。 */
 int vlcore_layout_engine_built(void);
 int vlcore_vlm_engine_built(void);

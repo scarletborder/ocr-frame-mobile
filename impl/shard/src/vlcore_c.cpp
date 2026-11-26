@@ -179,6 +179,10 @@ char* vlcore_prompt_for_label(const char* label) {
     return Duplicate(vlcore::PromptFor(Safe(label)));
 }
 
+char* vlcore_region_type(const char* label) {
+    return Duplicate(vlcore::RegionType(Safe(label)));
+}
+
 int vlcore_layout_engine_built(void) {
     return vlcore::LayoutEngineBuilt() ? 1 : 0;
 }

@@ -65,6 +65,12 @@ endif()
 
 if(LLAMA_ENABLED)
     target_link_libraries(vlcore PUBLIC llama mtmd)
+    # 保险：即使 llama.cpp 的 target 没把 mtmd 头目录 PUBLIC 出去（不同版本的 CMakeLists 有差异），
+    # 也能解析 <llama.h> / <mtmd.h>
+    target_include_directories(vlcore PRIVATE
+        ${LLAMA_DIR}/tools/mtmd
+        ${LLAMA_DIR}/include
+        ${LLAMA_DIR}/ggml/include)
 else()
     target_compile_definitions(vlcore PRIVATE VLCORE_WITHOUT_LLAMA=1)
 endif()

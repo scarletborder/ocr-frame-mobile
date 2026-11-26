@@ -39,10 +39,12 @@ bash scripts/bootstrap.sh && bash scripts/package-ipa.sh   # → build/VLOCR-uns
 ### Android
 
 ```bash
+# CI：push 即构建（或 Actions 手动 Run workflow）→ 下载 artifact VLOCR-apk
+# 本机：
 cd impl/android
 bash scripts/fetch-onnxruntime-android.sh     # ONNX Runtime 头文件 + arm64 so
 bash scripts/build-llama-android.sh           # llama.cpp 源码（NDK 直接编译）
-gradle assembleDebug                          # 或 Android Studio 打开
+gradle assembleRelease                        # release 变体 + debug 证书签名，可直接 sideload
 ```
 
 详见 [`impl/android/README.md`](impl/android/README.md)。
@@ -51,8 +53,8 @@ gradle assembleDebug                          # 或 Android Studio 打开
 
 | 用途 | 文件 | 来源 |
 |---|---|---|
-| 版面分析 | `PP-DocLayoutV3.onnx` | PaddleX 静态图模型 → `paddle2onnx`（脚本在 `impl/ios/tools/`） |
-| 视觉语言模型 | `PaddleOCR-VL-1.6-GGUF.gguf` + `-mmproj.gguf` | `PaddlePaddle/PaddleOCR-VL-1.6-GGUF` |
+| 版面分析 | `PP-DocLayoutV3.onnx` | PaddleX 静态图模型 → `paddle2onnx`（脚本在 `impl/ios/tools/`）；Windows 上转换失败时可用已验证的社区导出 `weihuanwan/PP-DocLayoutV3` |
+| 视觉语言模型 | `PaddleOCR-VL-1.6-GGUF.gguf` + `-mmproj.gguf` | `PaddlePaddle/PaddleOCR-VL-1.6-GGUF`（HF / ModelScope） |
 
 模型权重**不入库**，安装后由用户导入（iOS：设置页或 iTunes 文件共享；Android：设置页选择器）。
 

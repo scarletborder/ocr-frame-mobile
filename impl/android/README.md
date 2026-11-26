@@ -47,28 +47,54 @@ impl/android/
 
 ## 3. 环境
 
-- JDK 17、Android Studio（Ladybug 或更新）、Android NDK 26+、CMake 3.22+
+- JDK 17、Gradle 8.9+、Android SDK `platform 35`、**NDK `27.0.12077973`**（已在 `app/build.gradle.kts` 钉住）、CMake 3.22.1
 - 真机 arm64（0.9B 权重 + ONNX Runtime 只在真机上有意义），minSdk 26
 
 ## 4. 构建
 
+### 4.1 CI（推荐，不需要本机装 Android 工具链）
+
+`.github/workflows/android-apk.yml`，push 到 `main`/`master` 或手动 `Run workflow`：
+
+1. `with_llama = true`（默认）：编本地 VLM，首次 10–20 分钟，之后命中缓存；
+2. 下载 artifact **VLOCR-apk** → `app-release.apk`。
+
+```bash
+adb install -r app-release.apk
+# 或直接把 apk 传到手机点安装（需允许「未知来源」）
+```
+
+### 4.2 本机
+
 ```bash
 cd impl/android
 
-# ① 依赖（二选一或都跑）
-bash scripts/fetch-onnxruntime-android.sh   # 版面引擎
-bash scripts/build-llama-android.sh         # 本地 VLM 源码（首次 Gradle 构建会编译）
+# ① 依赖
+bash scripts/fetch-onnxruntime-android.sh   # 头文件 + so（同时放进 jniLibs 供打包）
+bash scripts/build-llama-android.sh         # 拉 llama.cpp 源码（首次 Gradle 构建时编译）
 
 # ② 构建
-gradle assembleDebug        # 或 Android Studio 直接打开 impl/android
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+gradle assembleRelease      # ← 发布用这个：native -O3，0.9B 推理才跑得动
+adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
-> 仓库里没有 `gradle-wrapper.jar`（二进制不入库）：Android Studio 打开工程会自动补齐，
-> 或本机装 Gradle 8.9+ 后执行 `gradle wrapper` 生成。
+关于签名的两点：
 
-只跑链路、先不编译 llama.cpp：跳过 ②，构建时 CMake 会警告「不含本地 VLM」，
+- `release` 变体用 **debug 证书**签名（`signingConfigs.getByName("debug")`），
+  这样公开仓库里不需要任何 keystore/密钥，产物可以直接 sideload；正式分发再换自己的 keystore。
+- 不要用 `assembleDebug` 做真机测试：debug 变体 native 是 `-O0`，0.9B 模型会慢到不可用。
+
+> 仓库里没有 `gradle-wrapper.jar`（二进制不入库）：Android Studio 打开工程会自动补齐，
+> 或本机装 Gradle 8.9+ 后执行 `gradle wrapper` 生成；CI 直接由 `gradle/actions/setup-gradle` 提供。
+
+只跑链路、先不编译 llama.cpp：跳过 `build-llama-android.sh`，CMake 会警告「不含本地 VLM」，
 App 里改用「远程服务」模式即可（设置页可切换）。
+
+### 4.3 一个容易踩的坑：ONNX Runtime 的 .so 必须进 APK
+
+`libonnxruntime.so` 是作为 imported shared library 链接的，AGP **不会**自动打包它。
+`fetch-onnxruntime-android.sh` 会把它额外复制到 `app/src/main/jniLibs/arm64-v8a/`，
+否则运行时报 `dlopen failed: library "libonnxruntime.so" not found`。
 
 ## 5. 模型准备
 

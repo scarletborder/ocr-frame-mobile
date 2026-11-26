@@ -20,6 +20,7 @@ private struct VLPageDTO: Decodable {
         let bbox: [Double]
         let text: String
         let recognized: Bool
+        let error: String?
     }
 
     let markdown: String
@@ -75,7 +76,9 @@ final class VLPipeline: @unchecked Sendable {
                                    order: block.order,
                                    score: block.score,
                                    text: block.text,
-                                   recognized: block.recognized)
+                                   recognized: block.recognized,
+                                   error: block.error ?? "",
+                                   regionType: VLOCREngine.regionType(forLabel: block.label))
         }
         return PageOutput(image: image, markdown: page.markdown, blocks: blocks, seconds: page.seconds)
     }

@@ -7,7 +7,10 @@
     paddle2onnx 对它的转换误差实测约 1.57%（社区 V2/V3 对比），可用于移动端。
 
 用法：
-    pip install paddle2onnx onnx onnxruntime
+    # 注意：paddle2onnx 只发 cp38–cp312 的轮子（无 sdist、无 cp313），
+    #       所以请用 Python 3.10/3.11/3.12 建 venv，不要用 3.13。
+    py -3.12 -m venv .venv && .venv/Scripts/activate     # Windows
+    pip install paddle2onnx onnx onnxruntime pillow
     python tools/export_layout_onnx.py --model-dir ~/models/PP-DocLayoutV3_infer \
         --output ~/models/PP-DocLayoutV3.onnx
 
@@ -17,9 +20,30 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+def resolve_paddle2onnx() -> list[str] | None:
+    """定位 paddle2onnx 可执行文件。
+
+    paddle2onnx 的 wheel 里没有 `__main__.py`，所以 `python -m paddle2onnx` 会失败；
+    优先用控制台脚本（venv 的 Scripts/paddle2onnx.exe / bin/paddle2onnx）。
+    """
+    found = shutil.which("paddle2onnx")
+    if found:
+        return [found]
+    for name in ("paddle2onnx.exe", "paddle2onnx"):
+        candidate = Path(sys.executable).with_name(name)
+        if candidate.exists():
+            return [str(candidate)]
+    probe = subprocess.run([sys.executable, "-m", "paddle2onnx", "--help"],
+                           capture_output=True, text=True)
+    if probe.returncode == 0:
+        return [sys.executable, "-m", "paddle2onnx"]
+    return None
 
 
 def main() -> int:
@@ -39,8 +63,13 @@ def main() -> int:
               "不是 transformers 引擎用的 safetensors 目录。", file=sys.stderr)
         return 2
 
-    command = [
-        sys.executable, "-m", "paddle2onnx",
+    launcher = resolve_paddle2onnx()
+    if launcher is None:
+        print("!! 找不到 paddle2onnx。请先 pip install paddle2onnx（Python 3.10–3.12）", file=sys.stderr)
+        print("   注意：paddle2onnx 没有 cp313 轮子，Python 3.13 装不上。", file=sys.stderr)
+        return 2
+
+    command = launcher + [
         "--model_dir", str(model_dir),
         "--model_filename", "inference.pdmodel",
         "--params_filename", "inference.pdiparams",

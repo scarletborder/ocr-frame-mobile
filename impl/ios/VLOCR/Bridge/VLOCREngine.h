@@ -22,6 +22,9 @@ typedef void (^VLOCREngineProgress)(NSInteger done, NSInteger total);
 /// 本地 VLM（llama.cpp + libmtmd）是否被编译进本次构建。
 + (BOOL)localVlmAvailable NS_SWIFT_NAME(localVlmAvailable());
 
+/// 标签的区域类型（text / heading / caption / table / image …），由共享核心给出。
++ (NSString *)regionTypeForLabel:(NSString *)label NS_SWIFT_NAME(regionType(forLabel:));
+
 /// 预设信息由共享核心提供，避免两端各写一份。
 + (NSString *)presetName NS_SWIFT_NAME(presetName());
 + (NSString *)presetVersion NS_SWIFT_NAME(presetVersion());

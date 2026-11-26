@@ -1,0 +1,110 @@
+name: Android APK
+
+# 在 ubuntu runner 上产出可直装的 release APK：
+#   · release 变体，native 走 -O3（0.9B 模型在 -O0 下会慢到不可用）
+#   · 用 debug 证书签名，所以仓库里不需要任何 keystore/密钥，装到任何设备都能用
+#
+# 触发：Actions 页面手动运行（可关掉本地 VLM 引擎），或改动 impl/android、impl/shard 时。
+
+on:
+  workflow_dispatch:
+    inputs:
+      with_llama:
+        description: "编译本地 VLM 引擎（llama.cpp）。关闭则产物只能走「远程服务」模式"
+        type: boolean
+        default: true
+  push:
+    branches: [main, master]
+    paths:
+      - "impl/android/**"
+      - "impl/shard/**"
+      - ".github/workflows/android-apk.yml"
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      LLAMA_REF: master
+      # 想强制重建 llama.cpp 的 native 产物（例如上游 mtmd API 变了），把这个 key 改一下
+      LLAMA_CACHE_KEY: llama-master-v1
+      ORT_ANDROID_VERSION: "1.22.0"
+      NDK_VERSION: "27.0.12077973"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # 仓库里没有 gradle-wrapper.jar（二进制不入库），由 action 提供指定版本的 gradle
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Android SDK 工具
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 platform / NDK / CMake
+        run: |
+          # `yes` 被 SIGPIPE 中断会让 pipefail 判定失败，这里显式忽略
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.1" \
+            "ndk;${NDK_VERSION}" \
+            "cmake;3.22.1"
+
+      - name: 缓存 llama.cpp 源码
+        if: ${{ inputs.with_llama != false }}
+        uses: actions/cache@v4
+        with:
+          path: impl/android/app/src/main/cpp/llama.cpp
+          key: ${{ env.LLAMA_CACHE_KEY }}-android-src
+
+      - name: 缓存 ONNX Runtime（Android）
+        id: ort
+        uses: actions/cache@v4
+        with:
+          path: |
+            impl/android/app/src/main/cpp/onnxruntime
+            impl/android/app/src/main/jniLibs
+          key: ort-android-${{ env.ORT_ANDROID_VERSION }}
+
+      # 复用 CMake 目标文件：llama.cpp 全量编译约 10–20 分钟，命中缓存后只剩增量
+      - name: 缓存 CMake 构建目录
+        uses: actions/cache@v4
+        with:
+          path: impl/android/app/.cxx
+          key: ${{ env.LLAMA_CACHE_KEY }}-ndk-${{ env.NDK_VERSION }}-cxx-${{ hashFiles('impl/android/app/src/main/cpp/CMakeLists.txt') }}
+
+      - name: 取 ONNX Runtime 头文件与 so
+        if: steps.ort.outputs.cache-hit != 'true'
+        env:
+          ONNXRUNTIME_VERSION: ${{ env.ORT_ANDROID_VERSION }}
+        run: bash impl/android/scripts/fetch-onnxruntime-android.sh
+
+      - name: 拉取 llama.cpp 源码
+        if: ${{ inputs.with_llama != false }}
+        run: bash impl/android/scripts/build-llama-android.sh
+
+      - name: 构建 release APK
+        working-directory: impl/android
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VLOCR-apk
+          path: impl/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+          if-no-files-found: error

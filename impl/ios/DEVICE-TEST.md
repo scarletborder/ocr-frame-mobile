@@ -103,6 +103,19 @@ App 已开启 `UIFileSharingEnabled`，iTunes 里能看到它的 Documents。
   `PP-DocLayoutV3.onnx`；上机前用 `impl/ios/tools/verify_layout_onnx.py` 核对 I/O 与坐标。
 - VLM：`huggingface-cli download PaddlePaddle/PaddleOCR-VL-1.6-GGUF --local-dir ~/models/vlm`。
 
+> **Windows 上 paddle2onnx 可能装不上**：它的 C++ 扩展 `paddle2onnx_cpp2py_export.pyd`
+> 在 paddle 3.x 下会报 `WinError 127 找不到指定的程序`（换 protobuf 版本也无效）。
+> 这时直接用**同源、已验证**的社区导出（PaddleX 静态图转出来的，三输入契约一致，
+> `130,502,049` 字节）：
+>
+> ```bash
+> curl -L -o ~/models/PP-DocLayoutV3.onnx \
+>   https://huggingface.co/weihuanwan/PP-DocLayoutV3/resolve/main/PP-DocLayoutV3.onnx
+> # 仍然必须跑一次 verify：期望 inputs = im_shape / image / scale_factor，outputs 含 [N,7]
+> ```
+>
+> 官方转换在 Linux / macOS 上正常。
+
 ## 5. 冒烟验收
 
 | # | 检查点 | 期望 |

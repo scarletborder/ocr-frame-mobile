@@ -206,6 +206,11 @@ static char *VLOCRRemoteCallback(const uint8_t *rgb, int width, int height,
     return vlcore_vlm_engine_built() != 0;
 }
 
++ (NSString *)regionTypeForLabel:(NSString *)label {
+    char *text = vlcore_region_type(label.UTF8String ?: "");
+    return VLOCRTakeString(text) ?: @"text";
+}
+
 + (NSString *)presetName {
     return [NSString stringWithUTF8String:vlcore_preset_name()];
 }

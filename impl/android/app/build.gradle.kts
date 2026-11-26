@@ -7,6 +7,9 @@ plugins {
 android {
     namespace = "ai.ocrframe.vlocr"
     compileSdk = 35
+    // 显式钉住 NDK：CI 用 sdkmanager 预装同版本（见 .github/workflows/android-apk.yml），
+    // 避免 AGP 默认版本与 runner 上已有版本不一致导致「NDK not configured」。
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "ai.ocrframe.vlocr"
@@ -45,6 +48,17 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    buildTypes {
+        release {
+            // demo 用 debug 证书签 release：产物可直接 sideload，仓库里不需要任何 keystore/密钥。
+            // 正式分发请换成自己的 keystore，并把口令放进 CI secrets。
+            signingConfig = signingConfigs.getByName("debug")
+            // 不开 R8：JNI 侧按名字调 Kotlin 方法，混淆会踩坑，且端侧推理更该关注 native 编译优化
+            isMinifyEnabled = false
+            isShrinkResources = false
+        }
     }
 
     packaging {

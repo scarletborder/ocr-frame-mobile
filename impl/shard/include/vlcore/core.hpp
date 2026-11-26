@@ -63,6 +63,9 @@ struct Block {
     float score{0};
     std::string text;
     bool recognized{false};
+    /// recognized=false 时给出人话原因（未送模型 / 裁剪失败 / 模型报错），
+    /// 端上直接展示，避免「什么都没说但全是空」。
+    std::string error;
 };
 
 /// 紧排 RGB（width*height*3），平台侧解码后交给核心。
