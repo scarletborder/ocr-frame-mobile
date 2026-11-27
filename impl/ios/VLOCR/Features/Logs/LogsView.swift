@@ -36,6 +36,15 @@ struct LogsView: View {
             case .error: return .error
             }
         }
+
+        /// 导出文件名后缀：中文文件名在部分分享目标上会被转义，这里固定用拉丁短词。
+        var fileToken: String {
+            switch self {
+            case .all: return ""
+            case .warn: return "warn"
+            case .error: return "error"
+            }
+        }
     }
 
     private var visible: [VLOCRLogEntry] {
@@ -70,14 +79,14 @@ struct LogsView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button {
-                            copyAll()
+                            copyCurrent()
                         } label: {
-                            Label("复制全部（\(store.entries.count) 行）", systemImage: "doc.on.doc")
+                            Label("复制当前（\(visible.count) 行）", systemImage: "doc.on.doc")
                         }
                         Button {
-                            prepareExport()
+                            exportCurrent()
                         } label: {
-                            Label("导出 / 下载", systemImage: "square.and.arrow.down")
+                            Label("导出当前（\(visible.count) 行）", systemImage: "square.and.arrow.down")
                         }
                         Divider()
                         Button(role: .destructive) {
@@ -220,22 +229,25 @@ struct LogsView: View {
         }
     }
 
-    private func copyAll() {
-        guard !store.entries.isEmpty else {
-            flash("暂无日志可复制")
+    /// 复制/导出都只作用于**当前筛选结果**：切到「仅错误」时拿到的就是错误那几行。
+    private func copyCurrent() {
+        let selected = visible
+        guard !selected.isEmpty else {
+            flash("当前筛选下没有日志")
             return
         }
-        UIPasteboard.general.string = store.snapshot()
-        flash("已复制 \(store.entries.count) 行")
+        UIPasteboard.general.string = store.snapshot(of: selected, scope: filter.rawValue)
+        flash("已复制「\(filter.rawValue)」\(selected.count) 行")
     }
 
-    private func prepareExport() {
-        guard !store.entries.isEmpty else {
-            flash("暂无日志可导出")
+    private func exportCurrent() {
+        let selected = visible
+        guard !selected.isEmpty else {
+            flash("当前筛选下没有日志")
             return
         }
-        exportFileName = LogStore.suggestedFileName()
-        exportDocument = LogTextDocument(text: store.snapshot())
+        exportFileName = LogStore.suggestedFileName(suffix: filter.fileToken)
+        exportDocument = LogTextDocument(text: store.snapshot(of: selected, scope: filter.rawValue))
         showExporter = true
     }
 

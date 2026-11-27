@@ -92,24 +92,29 @@ final class LogStore: ObservableObject {
     // MARK: - 导出
 
     /// 纯文本快照：复制与下载共用同一份内容，避免两边不一致。
-    func snapshot() -> String {
+    ///
+    /// 只导出**传进来的这批**（即当前筛选结果），并在头部写明筛选口径与比例——
+    /// 否则拿到一份「只有错误」的日志会误以为是全量，反而更难定位。
+    func snapshot(of selected: [VLOCRLogEntry], scope: String) -> String {
         var lines: [String] = []
         lines.append("VLOCR 日志")
         lines.append("导出时间：\(Self.fileTimeFormatter.string(from: Date()))")
         lines.append(contentsOf: Self.environmentLines)
-        lines.append("行数：\(entries.count)")
+        lines.append("筛选：\(scope)（\(selected.count) 行 / 缓冲区共 \(entries.count) 行）")
         lines.append(String(repeating: "-", count: 48))
-        for entry in entries {
+        for entry in selected {
             lines.append("\(timeFormatter.string(from: entry.date)) [\(entry.level.title)] \(entry.text)")
         }
         return lines.joined(separator: "\n")
     }
 
     /// 导出文件名（不含扩展名）。冒号在部分目标上非法，统一换成短横线。
-    static func suggestedFileName() -> String {
-        "VLOCR-log-" + fileTimeFormatter.string(from: Date())
+    static func suggestedFileName(suffix: String? = nil) -> String {
+        let stamp = fileTimeFormatter.string(from: Date())
             .replacingOccurrences(of: ":", with: "-")
             .replacingOccurrences(of: " ", with: "-")
+        guard let suffix, !suffix.isEmpty else { return "VLOCR-log-\(stamp)" }
+        return "VLOCR-log-\(stamp)-\(suffix)"
     }
 
     // MARK: - 环境信息

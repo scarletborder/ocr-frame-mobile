@@ -32,7 +32,8 @@ jobs:
     env:
       LLAMA_REF: master
       # 想强制重建 llama.xcframework（例如上游 mtmd API 变了），把这个 key 改一下
-      LLAMA_CACHE_KEY: llama-master-v1
+      # v2：求值改用 mtmd_helper_eval_chunks（M-RoPE），依赖 mtmd-helper.h 与 mtmd_input_chunk_get_n_pos
+      LLAMA_CACHE_KEY: llama-master-v2
       # ONNX Runtime 包形态/来源变化时同样改这个 key
       ORT_CACHE_KEY: ort-1.22.0-v1
 

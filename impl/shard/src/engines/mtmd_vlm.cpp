@@ -27,6 +27,25 @@
 #endif
 #endif
 
+// 上游的 mtmd-helper 是 libmtmd 的一部分，mtmd-helper.h 也是公开安装的头文件。
+// 它里面的 mtmd_helper_eval_chunks 会正确处理 M-RoPE（每个视觉 token 4 个位置分量）
+// 与非因果注意力——这两件事用老的 llama_batch 手写是做不到的。
+#if defined(VLCORE_LLAMA_ENABLED)
+#if __has_include(<llama/mtmd-helper.h>)
+#include <llama/mtmd-helper.h>
+#define VLCORE_MTMD_HELPER 1
+#elif __has_include(<mtmd-helper.h>)
+#include <mtmd-helper.h>
+#define VLCORE_MTMD_HELPER 1
+#endif
+#if !defined(VLCORE_MTMD_HELPER)
+// 缺 mtmd-helper.h 时只能编译出下面那份不支持 M-RoPE 的 EvalChunks，
+// 而 PaddleOCR-VL 是 M-RoPE 模型 → 每一块都会在 llama_decode 处被拒绝，
+// 表现就是「版面块都识别出来了，但一块文本也没有」。这里让它至少在编译日志里可见。
+#warning "缺 mtmd-helper.h：VLM 求值会退化为不支持 M-RoPE 的实现（PaddleOCR-VL 每块都失败）；请重建 llama.xcframework / 更新 llama.cpp 源码"
+#endif
+#endif
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -78,9 +97,14 @@ std::string Seconds(const std::chrono::steady_clock::time_point& started) {
     return std::string(buffer);
 }
 
-/// 逐 chunk 求值：文本 chunk 走 llama_decode，图像 chunk 先 mtmd_encode_chunk 再喂 embedding。
-/// 等价于 mtmd-helper 的 mtmd_helper_eval_chunks，但签名固定在本文件内，不受上游 helper 变更影响。
-/// 失败时把「哪一步、哪个数越界」写进 why，供上层日志与错误文案使用。
+#if !defined(VLCORE_MTMD_HELPER)
+/// 兜底实现：只有在拿不到 mtmd-helper.h 时才用。
+///
+/// ⚠️ 它**不支持 M-RoPE 模型**（PaddleOCR-VL 就是）：视觉 token 必须按 2D 网格给出 4 个位置分量，
+/// 这里只能给单个线性位置，于是 KV 里的最大位置（n_past + n_tokens - 1）会大于 n_past + n_pos，
+/// 下一个文本 chunk 就会撞上 llama.cpp 的检查：
+///   "the tokens of sequence 0 ... inconsistent sequence positions ... for M-RoPE, it is required X < Y"
+/// 一旦日志里出现这句，就说明构建里缺 mtmd-helper（去重建 llama.xcframework）。
 bool EvalChunks(mtmd_context* mctx, llama_context* lctx, const mtmd_input_chunks* chunks,
                 llama_pos* n_past, std::string* why) {
     const int32_t n_batch = std::max<int32_t>(1, llama_n_batch(lctx));
@@ -181,6 +205,8 @@ bool EvalChunks(mtmd_context* mctx, llama_context* lctx, const mtmd_input_chunks
     return true;
 }
 
+#endif  // !VLCORE_MTMD_HELPER
+
 class MtmdEngine final : public VlmEngine {
 public:
     ~MtmdEngine() override {
@@ -228,6 +254,13 @@ public:
                               "，n_batch=" + std::to_string(llama_n_batch(ctx_)) +
                               "，threads=" + std::to_string(n_threads) +
                               "，n_gpu_layers=" + std::to_string(model_params.n_gpu_layers));
+        // 求值路径决定 M-RoPE 模型能不能跑通：写进日志，才不会「看到块、看不到文本」时无从下手。
+#if defined(VLCORE_MTMD_HELPER)
+        LogLine(kLogInfo, "求值路径：mtmd_helper_eval_chunks（M-RoPE 位置与非因果注意力由上游处理）");
+#else
+        LogLine(kLogWarn, "求值路径：内置 EvalChunks（不支持 M-RoPE）—— "
+                          "PaddleOCR-VL 会每块都失败，请重建 llama.xcframework 以启用 mtmd-helper");
+#endif
 
         mmproj_path_ = mmproj_path;
         threads_ = std::max(1, n_threads);
@@ -321,31 +354,54 @@ public:
                 if (!chunk_summary.empty()) chunk_summary += " + ";
                 chunk_summary += is_image ? "图像 " : "文本 ";
                 chunk_summary += std::to_string(mtmd_input_chunk_get_n_tokens(chunk)) + " token";
+                // 图像 chunk 的 token 数与位置跨度常常不等（M-RoPE 按 2D 网格推进），两个数都记下。
+                if (is_image) {
+                    chunk_summary += "/" +
+                                     std::to_string(mtmd_input_chunk_get_n_pos(chunk)) + " pos";
+                }
             }
             LogLine(kLogInfo, "提示词 " + prompt + "，图像 " + std::to_string(image.width) + "x" +
                                   std::to_string(image.height) + "，切分：" + chunk_summary +
                                   "（n_batch=" + std::to_string(llama_n_batch(ctx_)) +
                                   "，n_ctx=" + std::to_string(llama_n_ctx(ctx_)) + "）");
 
-            const auto evaluate = [&](llama_pos* n_past, std::string* why) {
-                llama_memory_clear(llama_get_memory(ctx_), true);
-                *n_past = 0;
-                return EvalChunks(mtmd_, ctx_, chunks, n_past, why);
-            };
-
             llama_pos n_past = 0;
             std::string eval_why;
-            bool evaluated = evaluate(&n_past, &eval_why);
-            if (!evaluated && using_gpu_) {
-                // GPU 视觉编码失败 → 退回 CPU 重建 mtmd 再试一次（chunks 只含 token 序列，可复用）
-                LogLine(kLogWarn, "GPU 侧求值失败，重建视觉投影器并退回 CPU 重试一次：" + eval_why);
+            const auto evaluate = [&](std::string* why) {
+                llama_memory_clear(llama_get_memory(ctx_), true);
+                n_past = 0;
+#if defined(VLCORE_MTMD_HELPER)
+                // 交给上游：M-RoPE 的 4 分量位置、图像的非因果注意力、n_pos 推进都由它处理。
+                // 自己用 llama_batch 拼是错的（视觉 token 数 ≠ 位置跨度），会导致
+                // 「inconsistent sequence positions ... for M-RoPE, it is required X < Y」。
+                const int32_t rc = mtmd_helper_eval_chunks(mtmd_, ctx_, chunks, /*n_past*/ 0,
+                                                          /*seq_id*/ 0, llama_n_batch(ctx_),
+                                                          /*logits_last*/ true, &n_past);
+                if (rc == 0) return true;
+                SetError(why, "mtmd_helper_eval_chunks 返回 " + std::to_string(rc) +
+                                  "（具体原因见上一行 llama.cpp 输出）");
+                return false;
+#else
+                return EvalChunks(mtmd_, ctx_, chunks, &n_past, why);
+#endif
+            };
+
+            bool evaluated = evaluate(&eval_why);
+            if (!evaluated && using_gpu_ && !vision_fallback_done_) {
+                // 每个引擎只回退一次：退回 CPU 重编码代价极高（实测单块可达 150 s），
+                // 若根因在解码而不是视觉塔，重试只是把同一份耗时再花一遍。
+                vision_fallback_done_ = true;
+                LogLine(kLogWarn, "求值失败，重建视觉投影器并退回 CPU 重试（每个引擎仅回退一次）：" +
+                                      eval_why);
                 std::string retry_error;
                 if (InitMtmd(false, &retry_error)) {
                     eval_why.clear();
-                    evaluated = evaluate(&n_past, &eval_why);
+                    evaluated = evaluate(&eval_why);
                 } else {
-                    eval_why += "；CPU 回退也失败：" + retry_error;
+                    eval_why += "；CPU 回退初始化失败：" + retry_error;
                 }
+            } else if (!evaluated && using_gpu_) {
+                LogLine(kLogError, "已回退过 CPU，本次不再重试（避免再等一轮完整视觉编码）。");
             }
             if (!evaluated) {
                 LogLine(kLogError, "块求值失败：" + eval_why);
@@ -412,6 +468,14 @@ public:
                 LogLine(kLogWarn, "该块输出可能不完整（生成阶段解码中断）。");
             }
 
+            // 「块识别出来了但没有文本」是端上最难解释的状态：成功 + 空字符串会被当成「已识别」，
+            // 界面上就是一块空白。空白输出按未识别处理，并把原因带出去。
+            if (!decode_failed && output.find_first_not_of(" \t\r\n") == std::string::npos) {
+                LogLine(kLogWarn, "该块没有生成任何可见文本（首 token 即结束符），按未识别处理");
+                SetError(error, "模型没有输出任何内容（该块可能是空白，或裁切区域异常）。");
+                break;
+            }
+
             if (text != nullptr) *text = output;
             success = true;
         } while (false);
@@ -429,6 +493,8 @@ private:
     std::string mmproj_path_;
     int threads_{4};
     bool using_gpu_{false};
+    /// GPU→CPU 的视觉塔回退只做一次：失败后不再重复付重建与重编码的代价。
+    bool vision_fallback_done_{false};
     std::mutex mutex_;
 };
 

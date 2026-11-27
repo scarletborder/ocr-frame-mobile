@@ -128,9 +128,10 @@ App 已开启 `UIFileSharingEnabled`，iTunes 里能看到它的 Documents。
 | 6 | 结果页 Markdown | 标题带 `#`、正文分段、表格/公式保留原文 |
 | 7 | 结果页「版面块」 | `label` 是 `doc_title`/`text`/`table` 等，`order` 从 1 连续 |
 | 8 | 耗时 | 单页几十秒量级（0.9B 端侧模型，块越多越慢） |
-| 9 | 日志 tab | 有环境头（机型 / iOS / 预设 / 引擎链接状态）、逐块耗时与 llama.cpp 输出；「复制全部」「导出 / 下载」都可用 |
+| 9 | 日志 tab | 有环境头（机型 / iOS / 预设 / 引擎链接状态）、逐块耗时与 llama.cpp 输出；「复制当前 / 导出当前」跟随所选筛选（仅错误时只带错误行） |
+| 10 | 日志首屏「求值路径」 | 必须是 `mtmd_helper_eval_chunks`；若显示「内置 EvalChunks（不支持 M-RoPE）」，说明 llama.xcframework 没带上 `mtmd-helper.h`，识别会每块都失败（重建框架，别在端上找显存问题） |
 
-抓日志（Windows）：优先用 App 内**日志 tab**（`⋯ → 复制全部 / 导出 / 下载`），
+抓日志（Windows）：优先用 App 内**日志 tab**（`⋯ → 复制当前 / 导出当前`，跟随顶部筛选），
 这里能看到 llama.cpp 自己的报错行（Metal 分配、KV 槽位、mmproj 不匹配）；
 iTunes 看不到运行日志，装 `3uTools` 只能看崩溃日志。
 

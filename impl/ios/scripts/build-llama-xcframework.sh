@@ -40,4 +40,33 @@ mkdir -p "${ROOT}/Frameworks"
 rm -rf "${ROOT}/Frameworks/llama.xcframework"
 cp -R "${SRC}/build-apple/llama.xcframework" "${ROOT}/Frameworks/"
 
+# 校验：mtmd_vlm.cpp 的 M-RoPE 求值依赖 mtmd-helper.h（mtmd_helper_eval_chunks）。
+# 缺这个头时核心会静默退化成「不支持 M-RoPE」的实现，PaddleOCR-VL 会每块都失败，
+# 症状是「版面块都在，但一块文本也没有」——所以这里必须硬失败，不能留到真机上才发现。
+echo "==> 校验 framework 头文件与 mtmd 符号"
+for slice in "${ROOT}/Frameworks/llama.xcframework"/*; do
+  [ -d "${slice}/Headers" ] || continue
+  for header in llama.h mtmd.h mtmd-helper.h; do
+    if [ ! -f "${slice}/Headers/${header}" ]; then
+      if [ -f "${SRC}/tools/mtmd/${header}" ]; then
+        echo "    补齐 ${header} → $(basename "${slice}")/Headers/"
+        cp "${SRC}/tools/mtmd/${header}" "${slice}/Headers/"
+      elif [ -f "${SRC}/include/${header}" ]; then
+        echo "    补齐 ${header} → $(basename "${slice}")/Headers/"
+        cp "${SRC}/include/${header}" "${slice}/Headers/"
+      else
+        echo "!! $(basename "${slice}")/Headers 缺 ${header}，且 ${SRC} 里也找不到" >&2
+        exit 1
+      fi
+    fi
+  done
+
+  binary="${slice}/llama.framework/llama"
+  [ -f "${binary}" ] || binary="${slice}/Versions/A/llama"
+  if [ -f "${binary}" ] && ! xcrun nm -gU "${binary}" 2>/dev/null | grep -q "_mtmd_helper_eval_chunks"; then
+    echo "!! $(basename "${slice}") 未导出 mtmd_helper_eval_chunks（libmtmd 没合进 framework）" >&2
+    exit 1
+  fi
+done
+
 echo "==> 完成：impl/ios/Frameworks/llama.xcframework"
