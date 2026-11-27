@@ -1,88 +1,112 @@
-# impl/pc · 桌面最小示例（同一份 VL 线核心）
+# impl/pc · 桌面端等效验证器（Windows / Ubuntu）
 
-手机上只能看到「未识别」四个字，这里能看到**为什么**：每块的标签、阅读顺序、裁块尺寸、
-是否送模型、失败原因、以及合并后的 Markdown。
+**目的：把「改一行 → 推 CI → 出 ipa → Sideloadly 装机 → 拍一页」换成「改一行 → 重编 → 跑一张图」。**
 
-它与 iOS / Android 编译的是**同一份 `impl/shard`**，所以在这里复现的问题在手机上一模一样。
+它编译的是**同一份 `impl/shard`**：版面预处理（拉伸 800×800 + `/255`）、坐标解码、25 类标签、
+官方提示词、两阶段编排、`mtmd_helper_eval_chunks` 求值路径全部与 iOS / Android 一致；
+差异只有「图片怎么解码」和「界面长什么样」。所以在这里跑出来的块、文本、日志，手机上应当一模一样。
 
-## 1. 能做什么
+---
 
-| 模式 | 命令 | 验证什么 |
-|---|---|---|
-| 只版面 | `--layout model.onnx` | 版面检测、后处理、阅读顺序（不需要 VLM） |
-| 假 VLM | `--layout … --stub-vlm` | 裁块、提示词选择、Markdown 合并（不需要模型） |
-| 真 VLM | `--layout … --vlm …gguf --mmproj …gguf` | 完整两阶段 |
+## 1. 三步上手
 
-输出示例（`--stub-vlm`）：
+```bash
+cd impl/pc
 
-```
-  [ 0] text             已识别  «【stub】OCR: 318x63»
-  [ 7] table            已识别  «【stub】Table Recognition: 720x177»
-==> 版面块 8 个，未识别 0 个
-```
+# ① 依赖（ONNX Runtime + stb 头；真 VLM 再加 --with-llama）
+bash scripts/bootstrap.sh                 # Windows Git Bash / Ubuntu 通用
+# bash scripts/bootstrap.sh --with-llama  # 需要本地视觉模型时
 
-输出示例（缺 VLM 时，正是手机上「Markdown 全是 ![](block-N)」的现场）：
+# ② 构建（自动识别 MSVC / MinGW / GCC）
+bash scripts/build.sh
 
-```
-  [ 0] text             未识别  ← 尚未加载视觉语言模型，也没有配置远程识别服务。
-==> 版面块 8 个，未识别 8 个
+# ③ 跑
+./build/vlcore_pc --help
 ```
 
-> 修复后：**只有真正的插图类**才会在 Markdown 里输出 `![](block-N)`；
-> 文本块识别失败时不再产出占位图（之前会把「文字没识别出来」误报成「这里是一张图」）。
+依赖落在 `third_party/`（已 gitignore）：`onnxruntime/{include,lib}`、`stb_image.h`、
+`stb_image_write.h`、可选 `llama.cpp` + `llama-build`。CMake 会自动发现它们，
+所以也可以直接 `cmake -B build -S . && cmake --build build --config Release`。
 
-## 2. 依赖
+### 模型（与手机完全一致）
 
-| 组件 | 取法 |
+| 文件 | 从哪里来 |
 |---|---|
-| ONNX Runtime（版面） | 任意来源的 `onnxruntime_c_api.h` + 动态库（`onnxruntime.dll` / `libonnxruntime.so` / `.dylib`） |
-| llama.cpp（VLM，可选） | 源码 + 构建产物（`libllama` / `libmtmd` / `libggml*`） |
-| stb_image.h | `bash scripts/fetch-stb-image.sh`（不入库） |
+| `PP-DocLayoutV3.onnx` | 官方 `PP-DocLayoutV3_infer` 静态图 → `bash scripts/export-layout-onnx.sh --model-dir <infer目录> --output models/PP-DocLayoutV3.onnx`（内部调用手机端同一个 `impl/ios/tools/export_layout_onnx.py`） |
+| `PaddleOCR-VL-1.6-GGUF.gguf` + `-mmproj.gguf` | `huggingface-cli download PaddlePaddle/PaddleOCR-VL-1.6-GGUF --local-dir models/` |
 
-模型与手机完全一致：`PP-DocLayoutV3.onnx` + `PaddleOCR-VL-1.6-GGUF.gguf` + `-mmproj.gguf`。
+放到 `impl/pc/models/`（已 gitignore），或者任何路径 —— 都用参数传。
 
-## 3. 构建
+---
 
-### macOS / Linux
-
-```bash
-# llama.cpp（可选，只要 VLM 才需要）
-git clone --depth 1 https://github.com/ggml-org/llama.cpp ~/llama.cpp
-cmake -B ~/llama-build -S ~/llama.cpp -DCMAKE_BUILD_TYPE=Release \
-      -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF \
-      -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_COMMON=OFF -DLLAMA_BUILD_MTMD=ON -DGGML_OPENMP=OFF
-cmake --build ~/llama-build --target llama mtmd -j
-
-# 本体
-bash scripts/fetch-stb-image.sh
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
-      -DORT_ROOT=/path/to/ort \
-      -DLLAMA_DIR=$HOME/llama.cpp -DLLAMA_LIB_DIR=$HOME/llama-build
-cmake --build build -j
-```
-
-### Windows（MinGW）
-
-同上，生成器换成 `-G "MinGW Makefiles"`。已知问题见 §5。
-
-## 4. 跑
+## 2. 常用命令
 
 ```bash
-./build/vlcore_pc --image page.png --layout PP-DocLayoutV3.onnx --stub-vlm -v
-./build/vlcore_pc --image page.png --layout PP-DocLayoutV3.onnx \
-    --vlm PaddleOCR-VL-1.6-GGUF.gguf --mmproj PaddleOCR-VL-1.6-GGUF-mmproj.gguf \
+# 只做版面（最快，用来和手机/后端对块）
+./build/vlcore_pc --image page.png --layout models/PP-DocLayoutV3.onnx \
+    --detect-only --overlay page.boxes.png --boxes page.boxes.csv
+
+# 假 VLM：验证裁块尺寸、提示词选择、Markdown 合并（不需要视觉模型）
+./build/vlcore_pc --image page.png --layout models/PP-DocLayoutV3.onnx --stub-vlm -v
+
+# 完整两阶段（真 VLM）
+./build/vlcore_pc --image page.png --layout models/PP-DocLayoutV3.onnx \
+    --vlm models/PaddleOCR-VL-1.6-GGUF.gguf \
+    --mmproj models/PaddleOCR-VL-1.6-GGUF-mmproj.gguf \
     --out page.md --json page.json
+
+# 批量：一眼看完一批页面（每页输出 .md / .json / .boxes.csv / .boxes.png）
+./build/vlcore_pc --dir pages/ --out-dir out/ --layout models/PP-DocLayoutV3.onnx \
+    --vlm models/PaddleOCR-VL-1.6-GGUF.gguf --mmproj models/PaddleOCR-VL-1.6-GGUF-mmproj.gguf
 ```
 
-退出码：`0` 全部识别成功；`3` 有块失败（仍会输出 Markdown 与 JSON）；`1` 引擎/版面失败。
+| 参数 | 作用 |
+|---|---|
+| `--detect-only` | 只跑版面，不送 VLM（受 `--boxes/--overlay` 影响） |
+| `--stub-vlm` | 假 VLM 替身，文本形如 `【stub】OCR: 454x108` |
+| `--boxes <csv>` | 块表 `index,label,score,order,x1,y1,x2,y2,recognized`，可直接与手机结果 diff |
+| `--overlay <png>` | 把框按类别上色画回原图，块序号用点阵数字标在框左上角 |
+| `--dir / --out-dir` | 批量跑目录，每页四件套输出 |
+| `-v / -q` | 打印整页 Markdown / 关掉核心日志 |
 
-## 5. 已知问题（Windows + MinGW）
+退出码：`0` 全部识别成功；`3` 有块未识别（仍会输出全部产物）；`1` 引擎或版面失败。
 
-用 MinGW 构建的 llama.cpp 在本仓库的验证环境里，`mtmd_init_from_file`（视觉投影器初始化）
-会在打印 `--- vision hparams ---` 之后段错误；官方 `llama-mtmd-cli` 同样异常，
-因此判断为 **MinGW + 该视觉塔的上游问题**，与本仓库代码无关：
+---
 
-- Windows 上建议：`--stub-vlm`（验证版面/提示词/Markdown）或改用 MSVC 工具链；
-- 完整 VLM 链路请在 macOS / Linux 上跑（同一份源码，行为一致）。
+## 3. 怎么和手机对比
 
-版面（ONNX Runtime）在 Windows 上正常工作。
+核心日志是**同一份代码**打的，所以三行就能对上：
+
+```
+[info ] 版面推理完成：用时 … s，300 条查询，最高分 0.84（cls=…，框=…，order=…，原图 1080x790）
+[info ] 版面后处理：页面 1080x790，阈值 0.40，留下 N 块，用时 … s
+[info ] 提示词 OCR:，图像 454x108，切分：文本 4 token + 图像 … token/… pos（n_batch=4096，n_ctx=8192）
+```
+
+- 手机上：`⋯ → 导出当前`，桌面上：直接看 stderr；
+- **块数/坐标不一致** → 版面预处理或坐标还原跑偏（先看 `原图 WxH` 与 `留下 N 块`）；
+- **块一致但文本不同** → 提示词、生成长度上限或 VLM 求值路径（`求值路径：mtmd_helper_eval_chunks`）不同；
+- 文本被截断时先看 `生成 … token，用时 …，是否达到上限`。
+
+---
+
+## 4. 平台说明
+
+| 平台 | 说明 |
+|---|---|
+| **Ubuntu** | `sudo apt install build-essential cmake` 后按 §1 走；VLM 走源码构建的 llama.cpp+libmtmd |
+| **Windows + MSVC** | 推荐。在 “x64 Native Tools Command Prompt for VS” 里跑 `bash scripts/bootstrap.sh --with-llama` 与 `bash scripts/build.sh`（Git Bash 也从该环境启动，`cl` 才在 PATH 里） |
+| **Windows + MinGW** | 版面/提示词/Markdown 完全可用；**本地 VLM 不要用**：MinGW 编出的 `libmtmd` 在 `mtmd_init_from_file` 会段错误（上游 `llama-mtmd-cli` 同样崩），`build-llama.sh` 默认拒绝，加 `--force-mingw` 才会继续 |
+
+---
+
+## 5. 排错
+
+| 现象 | 处理 |
+|---|---|
+| `缺 third_party/stb_image.h` | `bash scripts/fetch-stb-image.sh` |
+| 产物不含版面引擎 | `bash scripts/bootstrap.sh`；或手动 `-DORT_ROOT=<含 include/lib 的目录>` |
+| Windows 启动报找不到 `onnxruntime.dll` | 构建时会把 DLL 拷到 exe 旁边；手动构建时自己拷，或把 `third_party/onnxruntime/lib` 加进 PATH |
+| 产物不含本地 VLM | `bash scripts/bootstrap.sh --with-llama`（Windows 需 MSVC） |
+| 版面块整体错位/整页一块 | 先确认用的是按官方约定导出的 ONNX（拉伸 + `/255`），见 `impl/ios/tools/verify_layout_onnx.py` |
+| 提示 `求值路径：内置 EvalChunks` | llama.cpp 太旧/没带 `mtmd-helper.h`，M-RoPE 模型会每块失败 → 重跑 `build-llama.sh` |

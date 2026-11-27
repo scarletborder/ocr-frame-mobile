@@ -33,6 +33,19 @@ float IoU(const Rect& a, const Rect& b) {
     return uni > 0.f ? intersection / uni : 0.f;
 }
 
+/// 官方 filter_boxes 的 `calculate_overlap_ratio(..., "small")`：交集 / **小框面积**。
+/// 小框完全嵌在大框里时 IoU 很小、这个比值却是 1.0，正是判「行内公式被正文框住」的依据。
+float OverlapRatioSmall(const Rect& a, const Rect& b) {
+    const float x1 = std::max(a.x1, b.x1);
+    const float y1 = std::max(a.y1, b.y1);
+    const float x2 = std::min(a.x2, b.x2);
+    const float y2 = std::min(a.y2, b.y2);
+    if (x2 <= x1 || y2 <= y1) return 0.f;
+    const float intersection = (x2 - x1) * (y2 - y1);
+    const float smaller = std::min(a.Area(), b.Area());
+    return smaller > 0.f ? intersection / smaller : 0.f;
+}
+
 /// 双线性采样；sx / sy 是源图像素坐标（0 起）。
 void SampleBilinear(const RgbBuffer& src, float sx, float sy, uint8_t* rgb) {
     sx = Clampf(sx, 0.f, static_cast<float>(src.width - 1));
@@ -121,34 +134,23 @@ const std::array<const char*, 25> kLabels = {
 bool BuildLayoutInput(const RgbBuffer& image, LayoutInput* out) {
     if (!image.Valid() || out == nullptr) return false;
 
-    const float raw_scale = static_cast<float>(kLayoutSide) / static_cast<float>(std::max(image.width, image.height));
-    int draw_w = std::max(1, static_cast<int>(std::lround(image.width * raw_scale)));
-    int draw_h = std::max(1, static_cast<int>(std::lround(image.height * raw_scale)));
-    draw_w = std::min(draw_w, kLayoutSide);
-    draw_h = std::min(draw_h, kLayoutSide);
-
+    // 官方 `inference.yml`：Resize 到 800x800 且 keep_ratio=false —— 横竖各自拉伸，
+    // 整张画布都被内容填满（没有补边），NormalizeImage 的 norm_type=none 只做 /255。
     const size_t plane = static_cast<size_t>(kLayoutSide) * kLayoutSide;
     out->side = kLayoutSide;
-    out->scale = static_cast<float>(draw_w) / static_cast<float>(image.width);
-    out->chw.assign(plane * 3, 0.f);
+    out->chw.resize(plane * 3);
 
-    // 先把整张画布填成「补边灰」的归一化值，未覆盖区域即为右下补边。
-    for (int c = 0; c < 3; c++) {
-        const float pad = (static_cast<float>(kLayoutPad) / 255.f - kLayoutMean[c]) / kLayoutStd[c];
-        std::fill(out->chw.begin() + static_cast<long>(c * plane),
-                  out->chw.begin() + static_cast<long>((c + 1) * plane), pad);
-    }
-
-    for (int y = 0; y < draw_h; y++) {
-        const float sy = (y + 0.5f) * static_cast<float>(image.height) / static_cast<float>(draw_h) - 0.5f;
-        for (int x = 0; x < draw_w; x++) {
-            const float sx = (x + 0.5f) * static_cast<float>(image.width) / static_cast<float>(draw_w) - 0.5f;
+    for (int y = 0; y < kLayoutSide; y++) {
+        const float sy = (y + 0.5f) * static_cast<float>(image.height) /
+                             static_cast<float>(kLayoutSide) - 0.5f;
+        for (int x = 0; x < kLayoutSide; x++) {
+            const float sx = (x + 0.5f) * static_cast<float>(image.width) /
+                                 static_cast<float>(kLayoutSide) - 0.5f;
             uint8_t rgb[3] = {0, 0, 0};
             SampleBilinear(image, sx, sy, rgb);
             const size_t index = static_cast<size_t>(y) * kLayoutSide + x;
             for (int c = 0; c < 3; c++) {
-                out->chw[c * plane + index] =
-                    (static_cast<float>(rgb[c]) / 255.f - kLayoutMean[c]) / kLayoutStd[c];
+                out->chw[c * plane + index] = static_cast<float>(rgb[c]) * kLayoutInputScale;
             }
         }
     }
@@ -206,10 +208,10 @@ RgbBuffer LimitPixels(const RgbBuffer& image, int max_pixels) {
 
 // ---------------------------------------------------------------- 版面后处理
 
-std::vector<Block> DecodeLayout(const float* rows, int row_count, float scale,
+std::vector<Block> DecodeLayout(const float* rows, int row_count,
                                 int image_width, int image_height, const LayoutParams& params) {
     std::vector<Block> result;
-    if (rows == nullptr || row_count <= 0 || scale <= 0.f) return result;
+    if (rows == nullptr || row_count <= 0) return result;
 
     const float page_area = static_cast<float>(image_width) * static_cast<float>(image_height);
     const bool portrait = image_height >= image_width;
@@ -233,11 +235,12 @@ std::vector<Block> DecodeLayout(const float* rows, int row_count, float scale,
         int class_id = static_cast<int>(std::lround(row[0]));
         if (class_id < 0 || class_id >= static_cast<int>(kLabels.size())) class_id = 22;  // text
 
+        // 模型图内已经按 im_shape 把框反算回原图像素，这里只做裁剪，不能再除任何缩放比。
         Rect box;
-        box.x1 = Clampf(std::min(row[2], row[4]) / scale, 0.f, static_cast<float>(image_width));
-        box.y1 = Clampf(std::min(row[3], row[5]) / scale, 0.f, static_cast<float>(image_height));
-        box.x2 = Clampf(std::max(row[2], row[4]) / scale, 0.f, static_cast<float>(image_width));
-        box.y2 = Clampf(std::max(row[3], row[5]) / scale, 0.f, static_cast<float>(image_height));
+        box.x1 = Clampf(std::min(row[2], row[4]), 0.f, static_cast<float>(image_width));
+        box.y1 = Clampf(std::min(row[3], row[5]), 0.f, static_cast<float>(image_height));
+        box.x2 = Clampf(std::max(row[2], row[4]), 0.f, static_cast<float>(image_width));
+        box.y2 = Clampf(std::max(row[3], row[5]), 0.f, static_cast<float>(image_height));
         if (box.Width() < 2.f || box.Height() < 2.f) continue;
 
         const std::string label = kLabels[class_id];
@@ -265,6 +268,57 @@ std::vector<Block> DecodeLayout(const float* rows, int row_count, float scale,
             }
         }
         if (!blocked) kept.push_back(candidate);
+    }
+
+    // 官方 `filter_boxes`（PaddleX layout_analysis/processors.py）：DETR 不做 NMS，
+    // 真正去掉重复框的是这一步 —— 重叠率按**小框面积**算：
+    //   · 任一侧是 inline_formula 且 > 0.5 → 丢掉公式框（行内公式被正文框住是常态）；
+    //   · 其它 > 0.7 → 丢面积小的那个（table/image/seal/chart 之间除外，避免误删嵌套表格）；
+    //   · 边长 < 6 的碎框、`reference` 一律丢。
+    // 少了这一步，同一段正文会被拆成「正文 + 一堆行内公式」重复识别，块数比 PC 多、文本还会错位。
+    {
+        const auto keep_both = [](const std::string& a, const std::string& b) {
+            const auto structural = [](const std::string& label) {
+                return label == "image" || label == "table" || label == "seal" || label == "chart";
+            };
+            if (!structural(a) && !structural(b)) return false;
+            if (a == b) return false;
+            return (a != "table" && b != "table") || (structural(a) && structural(b));
+        };
+
+        std::vector<bool> dropped(kept.size(), false);
+        for (size_t i = 0; i < kept.size(); i++) {
+            if (kept[i].label == "reference" || kept[i].box.Width() < 6.f ||
+                kept[i].box.Height() < 6.f) {
+                dropped[i] = true;
+                continue;
+            }
+            for (size_t j = i + 1; j < kept.size(); j++) {
+                if (dropped[i] || dropped[j]) continue;
+                const float ratio = OverlapRatioSmall(kept[i].box, kept[j].box);
+                const bool formula_i = kept[i].label == "inline_formula";
+                const bool formula_j = kept[j].label == "inline_formula";
+                if ((formula_i || formula_j) && ratio > 0.5f) {
+                    if (formula_i) dropped[i] = true;
+                    if (formula_j) dropped[j] = true;
+                    continue;
+                }
+                if (ratio <= 0.7f) continue;
+                if (keep_both(kept[i].label, kept[j].label)) continue;
+                if (kept[i].box.Area() >= kept[j].box.Area()) {
+                    dropped[j] = true;
+                } else {
+                    dropped[i] = true;
+                }
+            }
+        }
+
+        std::vector<Candidate> filtered;
+        filtered.reserve(kept.size());
+        for (size_t i = 0; i < kept.size(); i++) {
+            if (!dropped[i]) filtered.push_back(kept[i]);
+        }
+        kept.swap(filtered);
     }
 
     std::vector<int> orderable;

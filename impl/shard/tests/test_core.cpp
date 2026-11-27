@@ -71,19 +71,35 @@ void TestLabelRules() {
 void TestLayoutInput() {
     const vlcore::RgbBuffer image = MakeImage(400, 200, 255);
     vlcore::LayoutInput input;
-    Expect(vlcore::BuildLayoutInput(image, &input), "letterbox 应成功");
+    Expect(vlcore::BuildLayoutInput(image, &input), "版面预处理应成功");
     Expect(input.side == 800, "输入边长固定 800");
-    ExpectNear(input.scale, 2.0f, 1e-4f, "400 宽放大到 800 → scale=2");
     Expect(input.chw.size() == static_cast<size_t>(800) * 800 * 3, "CHW 元素数");
 
-    // 白色像素归一化后应为 (1 - mean) / std
-    const float expected = (1.f - 0.8286f) / 0.1889f;
-    ExpectNear(input.chw[0], expected, 1e-3f, "白色像素归一化");
+    // 官方 norm_type=none → 只除以 255，白色像素应为 1.0（不做 mean/std）
+    ExpectNear(input.chw[0], 1.f, 1e-3f, "白色像素只做 /255");
 
-    // 补边区域（右下）应为补边灰
-    const size_t pad_index = static_cast<size_t>(799) * 800 + 799;
-    const float pad_expected = (114.f / 255.f - 0.8286f) / 0.1889f;
-    ExpectNear(input.chw[pad_index], pad_expected, 1e-3f, "右下补边为 114 灰");
+    // keep_ratio=false → 整张画布都是内容，右下角同样是白（不是补边灰）
+    const size_t corner_index = static_cast<size_t>(799) * 800 + 799;
+    ExpectNear(input.chw[corner_index], 1.f, 1e-3f, "右下角无补边");
+
+    // 横竖各自拉伸：400x200 的图，y=799 映射回原图 y≈199、x=799 → x≈399，仍是白
+    const size_t bottom_left = static_cast<size_t>(799) * 800;
+    ExpectNear(input.chw[bottom_left], 1.f, 1e-3f, "底部一行仍是内容");
+
+    // 拉伸而不是 letterbox：左半黑、右半白时，x=399/400 必须是黑白分界（letterbox 会把内容挤到左上）
+    vlcore::RgbBuffer split = MakeImage(800, 400, 0);
+    for (int y = 0; y < split.height; y++) {
+        for (int x = 400; x < split.width; x++) {
+            const size_t index = (static_cast<size_t>(y) * split.width + x) * 3;
+            split.pixels[index] = split.pixels[index + 1] = split.pixels[index + 2] = 255;
+        }
+    }
+    vlcore::LayoutInput stretched;
+    Expect(vlcore::BuildLayoutInput(split, &stretched), "黑右白图应预处理成功");
+    const size_t plane = static_cast<size_t>(800) * 800;
+    ExpectNear(stretched.chw[static_cast<size_t>(400) * 800 + 399], 0.f, 1e-3f, "分界线左侧为黑");
+    ExpectNear(stretched.chw[static_cast<size_t>(400) * 800 + 400], 1.f, 1e-3f, "分界线右侧为白");
+    ExpectNear(stretched.chw[plane + static_cast<size_t>(799) * 800 + 799], 1.f, 1e-3f, "G 通道右下为白");
 }
 
 void TestCrop() {
@@ -99,7 +115,7 @@ void TestCrop() {
 }
 
 void TestDecodeLayout() {
-    // 800x800 竖版页面，scale=1 → 输出坐标即原图坐标
+    // 模型输出坐标已是原图像素（800x800 页面）
     std::vector<float> rows = {
         // doc_title，order_key=1
         6.f, 0.90f, 100.f, 50.f, 700.f, 120.f, 1.f,
@@ -116,14 +132,39 @@ void TestDecodeLayout() {
     };
     const vlcore::LayoutParams params;
     const std::vector<vlcore::Block> blocks =
-        vlcore::DecodeLayout(rows.data(), static_cast<int>(rows.size() / 7), 1.f, 800, 800, params);
+        vlcore::DecodeLayout(rows.data(), static_cast<int>(rows.size() / 7), 800, 800, params);
 
     Expect(blocks.size() == 3, "NMS/阈值/伪框过滤后剩 3 块");
     if (blocks.size() == 3) {
         Expect(blocks[0].label == "doc_title" && blocks[0].order == 1, "第一块是标题 order=1");
         Expect(blocks[1].label == "text" && blocks[1].order == 2, "第二块是正文 order=2");
         Expect(blocks[2].label == "footer" && blocks[2].order == -1, "页脚不编号且垫后");
-        ExpectNear(blocks[0].box.x1, 100.f, 0.5f, "坐标按 scale 还原");
+        ExpectNear(blocks[0].box.x1, 100.f, 0.5f, "坐标原样保留（不再除缩放比）");
+    }
+}
+
+/// 官方 filter_boxes：行内公式被正文框住要去掉，碎框与 reference 也要去掉。
+void TestOverlapFilter() {
+    std::vector<float> rows = {
+        // 正文块（order_key=1）
+        22.f, 0.90f, 100.f, 100.f, 700.f, 200.f, 1.f,
+        // 行内公式，完全嵌在正文里（小框重叠率=1.0）→ 必须丢弃
+        15.f, 0.85f, 300.f, 120.f, 360.f, 150.f, 2.f,
+        // 另一段正文（不重叠）
+        22.f, 0.80f, 100.f, 300.f, 400.f, 400.f, 3.f,
+        // 碎框（高 3px）→ 丢弃
+        22.f, 0.70f, 500.f, 500.f, 600.f, 503.f, 4.f,
+        // reference 区 → 丢弃（与官方一致）
+        18.f, 0.65f, 100.f, 600.f, 700.f, 700.f, 5.f,
+    };
+    const vlcore::LayoutParams params;
+    const std::vector<vlcore::Block> blocks =
+        vlcore::DecodeLayout(rows.data(), static_cast<int>(rows.size() / 7), 800, 800, params);
+
+    Expect(blocks.size() == 2, "嵌套行内公式/碎框/reference 都被过滤，只剩 2 段正文");
+    if (blocks.size() == 2) {
+        Expect(blocks[0].label == "text" && blocks[0].order == 1, "第一段正文 order=1");
+        Expect(blocks[1].label == "text" && blocks[1].order == 2, "第二段正文 order=2");
     }
 }
 
@@ -230,6 +271,7 @@ int main() {
     TestLayoutInput();
     TestCrop();
     TestDecodeLayout();
+    TestOverlapFilter();
     TestMarkdown();
     TestJson();
     TestLogSink();

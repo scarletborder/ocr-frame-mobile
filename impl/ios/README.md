@@ -104,9 +104,9 @@ python tools/verify_layout_onnx.py --model ~/models/PP-DocLayoutV3.onnx --image 
 
 | 项 | 约定 |
 |---|---|
-| 输入 | `image [1,3,800,800]` float32（RGB、letterbox、右下补 114）、`im_shape [1,2]=[h,w]`、`scale_factor [1,2]=[1/r,1/r]` |
-| 归一化 | `mean=[0.8286,0.8281,0.8282]`、`std=[0.1889,0.1889,0.1889]` |
-| 输出 | `[300,7]` = `[class_id, score, x1, y1, x2, y2, order]`，坐标在 letterbox 空间 |
+| 输入 | `image [1,3,800,800]` float32（RGB、**横竖拉伸**到 800×800，不补边）、`im_shape [1,2]=[原图高,原图宽]`、`scale_factor [1,2]=[1,1]` |
+| 归一化 | 只除以 255（官方 `norm_type: none`，不减均值不除方差） |
+| 输出 | `[300,7]` = `[class_id, score, x1, y1, x2, y2, order]`，**坐标已是原图像素**（图内按 `im_shape` 反算，端上不得再除缩放比） |
 
 ### 5.2 视觉语言模型（`.gguf` + `-mmproj.gguf`）
 

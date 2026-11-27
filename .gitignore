@@ -20,6 +20,12 @@ impl/android/.cxx/
 impl/android/app/src/main/cpp/llama.cpp/
 impl/android/app/src/main/cpp/onnxruntime/
 
+# 桌面端（impl/pc）：依赖、构建产物、模型
+impl/pc/third_party/
+impl/pc/build/
+impl/pc/build-msvc/
+impl/pc/models/
+
 # ============================================================================
 # 通用
 # ============================================================================

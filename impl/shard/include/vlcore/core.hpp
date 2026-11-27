@@ -3,8 +3,8 @@
 // 唯一真相在这里，平台侧不允许再复制一份：
 //   · 25 类版面标签字典与「跳过排序 / 忽略 Markdown / 纯插图」集合
 //   · 官方提示词（OCR: / Table Recognition: / Formula Recognition: …）
-//   · letterbox + 归一化、裁块、缩放
-//   · 检测后处理：反算坐标 → 阈值 → NMS → 整页伪框过滤 → 阅读顺序编号
+//   · 版面预处理（拉伸 + /255）、裁块、缩放
+//   · 检测后处理：阈值 → NMS → 整页伪框过滤 → 阅读顺序编号
 //   · Markdown 合并规则
 // 与 impl/ocr_core/vl/{blocks,markdown,options}.py 保持同源，改这里必须同步改 Python 侧。
 #pragma once
@@ -30,11 +30,15 @@ struct Preset {
 /// PP-DocLayoutV3 的 25 类标签，下标即模型 class_id（0…24）。
 extern const std::array<const char*, 25> kLabels;
 
-/// 模型输入边长与 letterbox 补边灰度（PaddleX 约定）。
+/// 版面模型输入边长（PP-DocLayoutV3 官方 `inference.yml`）。
+///
+/// 官方预处理只有两步，任何第三套做法都会让版面块错位/缺块：
+///   1. `Resize`：`target_size 800x800` + **`keep_ratio: false`** → 直接拉伸，**不补边**；
+///   2. `NormalizeImage`：`norm_type: none`、mean 0、std 1 → **只除以 255**，不减均值不除方差。
+/// 端侧曾用「letterbox + 补 114 + (x/255-mean)/std」，模型把整页看成两块插图（同一页只有 3 条
+/// 候选，正确预处理是 10 条），于是正文被当成一张大图送去识别 → 文本被截断。
 constexpr int kLayoutSide = 800;
-constexpr uint8_t kLayoutPad = 114;
-constexpr float kLayoutMean[3] = {0.8286f, 0.8281f, 0.8282f};
-constexpr float kLayoutStd[3] = {0.1889f, 0.1889f, 0.1889f};
+constexpr float kLayoutInputScale = 1.f / 255.f;
 /// 单块视觉 token 对应的像素预算上限（官方 max_pixels=1003520）。
 constexpr int kMaxBlockPixels = 1003520;
 
@@ -80,11 +84,13 @@ struct RgbBuffer {
     }
 };
 
-/// 版面模型输入：CHW 浮点张量 + letterbox 缩放比。
+/// 版面模型输入：800x800 直接拉伸的 CHW 浮点张量，值域 0–1。
+///
+/// 不再带「缩放比」：模型图内按 im_shape 把框反算回原图坐标，端上只需把 scale_factor 传 1，
+/// 再乘除一次就是二次缩放（会把整段正文框缩到页面上半部分）。
 struct LayoutInput {
     std::vector<float> chw;
     int side{0};
-    float scale{1};
 };
 
 struct LayoutParams {
@@ -122,7 +128,7 @@ void LogLine(LogLevel level, const std::string& text);
 
 // ---- 图像 ----
 
-/// letterbox 到 800x800（右下补 114）并归一化成 CHW。补边在右下，反算只需除以 scale。
+/// 拉伸到 800x800（官方 keep_ratio=false，不补边）并只除以 255，输出 CHW。
 bool BuildLayoutInput(const RgbBuffer& image, LayoutInput* out);
 
 /// 按版面框裁块，外扩 expand_ratio 避免裁掉字形边缘；越界自动裁剪。
@@ -134,8 +140,9 @@ RgbBuffer LimitPixels(const RgbBuffer& image, int max_pixels = kMaxBlockPixels);
 // ---- 版面后处理 ----
 
 /// rows 为模型输出 [N,7] = [class_id, score, x1, y1, x2, y2, order_key]，
-/// 坐标在 letterbox 空间；返回按阅读顺序排好的块（未编号的垫后）。
-std::vector<Block> DecodeLayout(const float* rows, int row_count, float scale,
+/// 坐标**已是原图像素**（图内按 im_shape 反算），只需裁剪到页面范围；
+/// 返回按阅读顺序排好的块（未编号的垫后）。
+std::vector<Block> DecodeLayout(const float* rows, int row_count,
                                 int image_width, int image_height, const LayoutParams& params);
 
 // ---- 标签规则（与 ocr_core/vl/blocks.py 同源）----

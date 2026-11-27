@@ -64,7 +64,7 @@ bool Pipeline::Detect(const RgbBuffer& page, std::vector<Block>* blocks, std::st
 
     const auto decode_started = std::chrono::steady_clock::now();
     const int row_count = static_cast<int>(rows.size() / 7);
-    *blocks = DecodeLayout(rows.data(), row_count, input.scale, page.width, page.height, params_);
+    *blocks = DecodeLayout(rows.data(), row_count, page.width, page.height, params_);
     LogLine(kLogInfo, "版面后处理：页面 " + std::to_string(page.width) + "x" +
                           std::to_string(page.height) + "，阈值 " +
                           Fixed(params_.score_threshold, 2) + "，留下 " +

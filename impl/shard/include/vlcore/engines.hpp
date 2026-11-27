@@ -15,7 +15,7 @@ class LayoutEngine {
 public:
     virtual ~LayoutEngine() = default;
 
-    /// rows 输出 N*7 = [class_id, score, x1, y1, x2, y2, order_key]（letterbox 空间）。
+    /// rows 输出 N*7 = [class_id, score, x1, y1, x2, y2, order_key]（坐标已是原图像素）。
     virtual bool Run(const LayoutInput& input, int image_width, int image_height,
                      std::vector<float>* rows, std::string* error) = 0;
 };

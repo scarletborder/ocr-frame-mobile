@@ -53,16 +53,32 @@ gradle assembleRelease                        # release 变体 + debug 证书签
 
 | 用途 | 文件 | 来源 |
 |---|---|---|
-| 版面分析 | `PP-DocLayoutV3.onnx` | PaddleX 静态图模型 → `paddle2onnx`（脚本在 `impl/ios/tools/`）；Windows 上转换失败时可用已验证的社区导出 `weihuanwan/PP-DocLayoutV3` |
+| 版面分析 | `PP-DocLayoutV3.onnx` | 官方 `PP-DocLayoutV3_infer` 静态图 → `bash impl/pc/scripts/export-layout-onnx.sh`（内部就是 `impl/ios/tools/export_layout_onnx.py`）。**必须用这条路径导出的模型**：端侧预处理严格按官方 `inference.yml`（拉伸 800×800 + 仅 `/255`），社区那些 `/255 + ImageNet mean/std` 的导出会让整页只剩几条候选、正文被并成大图 |
 | 视觉语言模型 | `PaddleOCR-VL-1.6-GGUF.gguf` + `-mmproj.gguf` | `PaddlePaddle/PaddleOCR-VL-1.6-GGUF`（HF / ModelScope） |
 
 模型权重**不入库**，安装后由用户导入（iOS：设置页或 iTunes 文件共享；Android：设置页选择器）。
 
+### 桌面端等效验证（Windows / Ubuntu）
+
+改一行就要出 ipa 才能看效果太慢：`impl/pc` 编译的是**同一份 `impl/shard`**、加载**同一组模型**，
+所以桌面上跑出来的块、文本、日志与手机一致。
+
+```bash
+cd impl/pc
+bash scripts/bootstrap.sh      # ONNX Runtime + stb 头（真 VLM 再加 --with-llama）
+bash scripts/build.sh
+./build/vlcore_pc --image page.png --layout models/PP-DocLayoutV3.onnx \
+    --vlm models/PaddleOCR-VL-1.6-GGUF.gguf --mmproj models/PaddleOCR-VL-1.6-GGUF-mmproj.gguf \
+    --overlay page.boxes.png --boxes page.boxes.csv
+```
+
+详见 [`impl/pc/README.md`](impl/pc/README.md)。
+
 ## 3. 共享核心
 
-`impl/shard` 里放着两端共用的**全部 VL 线规则**：25 类版面标签字典、官方提示词、letterbox 与归一化、
-检测后处理（阈值 / NMS / 整页伪框 / 阅读顺序）、Markdown 合并、两阶段编排，以及两个推理引擎
-（ONNX Runtime / llama.cpp+mtmd）。
+`impl/shard` 里放着两端共用的**全部 VL 线规则**：25 类版面标签字典、官方提示词、版面预处理
+（拉伸 800×800 + /255）、检测后处理（阈值 / NMS / 整页伪框 / 阅读顺序）、Markdown 合并、
+两阶段编排，以及两个推理引擎（ONNX Runtime / llama.cpp+mtmd）。
 
 平台侧只剩：图片解码、引擎链接方式、模型文件管理、UI。详见 [`impl/shard/README.md`](impl/shard/README.md)。
 
@@ -77,6 +93,7 @@ gradle assembleRelease                        # release 变体 + debug 证书签
 | [docs/02-features.md](docs/02-features.md) | 特性清单、两端能力矩阵、预设参数 |
 | [docs/03-ui-ux.md](docs/03-ui-ux.md) | 信息架构、线框图、组件与排版规格、状态矩阵、RTL |
 | [impl/shard/README.md](impl/shard/README.md) | 共享边界、C API、编译矩阵 |
+| [impl/pc/README.md](impl/pc/README.md) | 桌面端等效验证器：依赖/构建/与手机对日志的方法 |
 | [impl/ios/README.md](impl/ios/README.md) | iOS 技术栈、目录、模型准备 |
 | [impl/ios/DEVICE-TEST.md](impl/ios/DEVICE-TEST.md) | 真机安装 Runbook（Windows + Sideloadly） |
 | [impl/android/README.md](impl/android/README.md) | Android 构建、模型导入、排错 |

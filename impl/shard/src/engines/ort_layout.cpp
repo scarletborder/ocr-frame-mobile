@@ -1,10 +1,17 @@
 // PP-DocLayoutV3 的 ONNX Runtime 实现（iOS / Android 共用同一份）。
 //
-// 模型 I/O 约定（PaddleX 导出形态，tools/verify_layout_onnx.py 是同一套约定的参考实现）：
-//   image        [1,3,800,800] float32  RGB，letterbox 右下补 114，(x/255-mean)/std
+// 模型 I/O 约定（严格按官方 PP-DocLayoutV3 `inference.yml`，
+// tools/verify_layout_onnx.py 是同一套约定的参考实现）：
+//   image        [1,3,800,800] float32  RGB，横竖各自**拉伸**到 800x800（keep_ratio=false，无补边），只 /255
 //   im_shape     [1,2] float32          [原图高, 原图宽]
-//   scale_factor [1,2] float32          [1/r, 1/r] → 输出坐标 = 原图坐标 / scale_factor
-//   检测输出     [N,7] float32          [class_id, score, x1, y1, x2, y2, order_key]
+//   scale_factor [1,2] float32          固定 [1,1]
+//   检测输出     [N,7] float32          [class_id, score, x1, y1, x2, y2, order_key]，**坐标已是原图像素**
+//
+// 两个坑（都实测过，用官方 pdmodel 直接跑同一页对照）：
+//   · 图内后处理是 `origin_shape = im_shape / scale_factor`，再把归一化框乘回 origin_shape，
+//     所以喂「原图高宽 + scale_factor=1」得到的就是原图坐标；再传 1/r 或再除一次缩放比会二次缩放。
+//   · 预处理必须是「拉伸 + /255」。改成 letterbox + 补 114 + (x/255-mean)/std 后，同一页只剩 3 条
+//     候选且整块被当成 image（正文被合成一张大图送去识别 → 文本被截断）。
 #include "vlcore/engines.hpp"
 
 // 引擎可用性自动探测。ONNX Runtime 的 iOS 二进制有三种打包形态，头文件路径各不相同：
@@ -22,6 +29,13 @@
 #endif
 
 #if defined(VLCORE_ORT_ENABLED)
+// MinGW 里 `_stdcall` 预定义成 __attribute__((stdcall))，出现在 ORT 的函数指针声明位置是非法的
+// （`void*(__attribute__((stdcall))* Alloc)`）；x64 上 stdcall 与默认约定一致，置空即可。
+// 必须在 ORT 头之前处理，桌面端（impl/pc）与 Android NDK 都走这条分支。
+#if defined(_WIN32) && !defined(_MSC_VER)
+#undef _stdcall
+#define _stdcall
+#endif
 #if __has_include(<onnxruntime/onnxruntime_c_api.h>)
 #include <onnxruntime/onnxruntime_c_api.h>
 #elif __has_include(<onnxruntime/core/session/onnxruntime_c_api.h>)
@@ -127,8 +141,8 @@ public:
         const int64_t image_dims[4] = {1, 3, input.side, input.side};
         const int64_t pair_dims[2] = {1, 2};
         float im_shape[2] = {static_cast<float>(image_height), static_cast<float>(image_width)};
-        const float inverse = 1.f / (input.scale > 0.f ? input.scale : 1.f);
-        float scale_factor[2] = {inverse, inverse};
+        // 固定 1：图内已按 im_shape 把框反算回原图坐标（见文件头「两个坑」）。
+        float scale_factor[2] = {1.f, 1.f};
 
         OrtValue* image_value = nullptr;
         OrtValue* shape_value = nullptr;
@@ -189,8 +203,8 @@ public:
             const float* data = static_cast<const float*>(raw);
             rows->assign(data, data + count);
 
-            // 把「最高分那条查询的原始数值」记进日志：判断坐标是 letterbox 空间还是已反算回原图、
-            // 以及输入归一化是否对得上，全靠这几个数（分数整体偏低同样是预处理的信号）。
+            // 把「最高分那条查询的原始数值」记进日志：分数整体偏低或框越出页面都是预处理/坐标约定的信号
+            // （例如曾经出现的 letterbox+mean/std 让整页只剩 3 条候选）。
             const size_t row_count = count / 7;
             size_t best = 0;
             for (size_t i = 1; i < row_count; i++) {
@@ -204,9 +218,9 @@ public:
                        "，框=" + Format(static_cast<double>(row[2])) + "," +
                        Format(static_cast<double>(row[3])) + "," +
                        Format(static_cast<double>(row[4])) + "," +
-                       Format(static_cast<double>(row[5])) + "，order=" +
-                       Format(static_cast<double>(row[6])) + "，scale=1/" +
-                       Format(1.0 / (input.scale > 0.f ? input.scale : 1.f)) + "）";
+                       Format(static_cast<double>(row[5])) +                        "，order=" +
+                       Format(static_cast<double>(row[6])) + "，原图 " +
+                       std::to_string(image_width) + "x" + std::to_string(image_height) + "）";
             }
             LogLine(kLogInfo, "版面推理完成：用时 " + Format(seconds) + " s，" +
                                   std::to_string(row_count) + " 条查询" + top);

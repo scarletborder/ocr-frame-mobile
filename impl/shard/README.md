@@ -6,8 +6,8 @@
 |---|---|
 | 25 类版面标签字典、跳过排序 / 忽略 Markdown / 纯插图集合 | 图片解码（CGImage / Bitmap → RGB） |
 | 官方提示词（`OCR:` / `Table Recognition:` / `Formula Recognition:` …） | 推理库的链接方式（xcframework / CMake） |
-| letterbox + 归一化、裁块、像素上限 | UI |
-| 检测后处理：反算坐标 → 阈值 → NMS → 整页伪框 → 阅读顺序编号 | 模型文件选择与持久化 |
+| 版面预处理（拉伸 800×800 + /255）、裁块、像素上限 | UI |
+| 检测后处理：阈值 → NMS → 整页伪框 → 阅读顺序编号 | 模型文件选择与持久化 |
 | 两阶段编排（版面 → 逐块 VLM → Markdown） | 远程服务的 HTTP 实现 |
 | 两个推理引擎（ONNX Runtime / llama.cpp+mtmd） | — |
 
@@ -21,7 +21,7 @@ impl/shard/
 │   ├── pipeline.hpp    两阶段编排
 │   └── vlcore_c.h      C 门面（iOS 用 ObjC++、Android 用 JNI 调用它）
 ├── src/
-│   ├── core.cpp        标签表、letterbox/裁块/缩放、NMS+阅读顺序、Markdown、JSON
+│   ├── core.cpp        标签表、版面预处理/裁块/缩放、NMS+阅读顺序、Markdown、JSON
 │   ├── pipeline.cpp    编排：单块失败不拖垮整页
 │   ├── vlcore_c.cpp    C 门面实现（JSON 结果 + malloc 字符串约定）
 │   └── engines/
