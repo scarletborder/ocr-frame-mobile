@@ -5,9 +5,14 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 
 namespace vlcore {
 namespace {
+
+std::mutex g_log_mutex;
+LogSink g_log_sink = nullptr;
+void* g_log_user = nullptr;
 
 float Clampf(float value, float low, float high) {
     return value < low ? low : (value > high ? high : value);
@@ -77,6 +82,31 @@ std::string Number(float value, int precision) {
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------- 日志
+
+void SetLogSink(LogSink sink, void* user) {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    g_log_sink = sink;
+    g_log_user = sink != nullptr ? user : nullptr;
+}
+
+bool LogActive() {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    return g_log_sink != nullptr;
+}
+
+void LogLine(LogLevel level, const std::string& text) {
+    // 先取出 sink 再释放锁：sink 可能重入（例如它自己又打一条日志），持锁回调会死锁。
+    LogSink sink = nullptr;
+    void* user = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_log_mutex);
+        sink = g_log_sink;
+        user = g_log_user;
+    }
+    if (sink != nullptr) sink(static_cast<int>(level), text.c_str(), user);
+}
 
 const std::array<const char*, 25> kLabels = {
     "abstract", "algorithm", "aside_text", "chart", "content",

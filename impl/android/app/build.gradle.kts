@@ -7,9 +7,8 @@ plugins {
 android {
     namespace = "ai.ocrframe.vlocr"
     compileSdk = 35
-    // 显式钉住 NDK：CI 用 sdkmanager 预装同版本（见 .github/workflows/android-apk.yml），
-    // 避免 AGP 默认版本与 runner 上已有版本不一致导致「NDK not configured」。
-    ndkVersion = "27.0.12077973"
+    // CI 从 runner 预装的 ANDROID_NDK_HOME 取版本注入，本机则由 AGP 使用其默认 NDK。
+    providers.environmentVariable("ANDROID_NDK_VERSION").orNull?.let { ndkVersion = it }
 
     defaultConfig {
         applicationId = "ai.ocrframe.vlocr"
@@ -33,7 +32,7 @@ android {
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+            version = providers.environmentVariable("ANDROID_CMAKE_VERSION").orNull ?: "3.22.1"
         }
     }
 

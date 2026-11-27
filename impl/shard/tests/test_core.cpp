@@ -184,6 +184,44 @@ void TestJson() {
     Expect(vlcore::EscapeJson("\t") == "\\t", "EscapeJson 制表符");
 }
 
+struct LogCapture {
+    std::vector<int> levels;
+    std::vector<std::string> lines;
+    int reentry = 0;
+};
+
+void CaptureSink(int level, const char* message, void* user) {
+    auto* capture = static_cast<LogCapture*>(user);
+    if (capture == nullptr || message == nullptr) return;
+    capture->levels.push_back(level);
+    capture->lines.push_back(message);
+    // sink 内部再打一行日志：验证 LogLine 不会在持锁状态下回调（否则这里就死锁了）。
+    if (capture->reentry < 1) {
+        capture->reentry += 1;
+        vlcore::LogLine(vlcore::kLogDebug, "重入");
+    }
+}
+
+void TestLogSink() {
+    Expect(!vlcore::LogActive(), "默认没有 sink");
+
+    LogCapture capture;
+    vlcore::SetLogSink(CaptureSink, &capture);
+    Expect(vlcore::LogActive(), "安装后 sink 生效");
+
+    vlcore::LogLine(vlcore::kLogWarn, "第一行");
+    Expect(capture.lines.size() == 2, "sink 收到日志（含一次重入）");
+    Expect(!capture.levels.empty() && capture.levels.front() == vlcore::kLogWarn,
+           "级别按原值透传");
+    Expect(!capture.lines.empty() && capture.lines.front() == "第一行", "正文原样透传");
+
+    vlcore::SetLogSink(nullptr, nullptr);
+    Expect(!vlcore::LogActive(), "卸载后 sink 失效");
+    const size_t before = capture.lines.size();
+    vlcore::LogLine(vlcore::kLogError, "卸载后的日志");
+    Expect(capture.lines.size() == before, "卸载后不再回调");
+}
+
 }  // namespace
 
 int main() {
@@ -194,6 +232,7 @@ int main() {
     TestDecodeLayout();
     TestMarkdown();
     TestJson();
+    TestLogSink();
 
     if (g_failures == 0) {
         std::printf("PASS: 全部共享核心用例通过\n");

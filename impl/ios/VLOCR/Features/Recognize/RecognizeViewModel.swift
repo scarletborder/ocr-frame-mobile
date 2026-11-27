@@ -32,6 +32,8 @@ final class RecognizeViewModel: ObservableObject {
         items = images.map { Item(image: $0, thumbnail: ImageTools.thumbnail($0, maxDimension: 320)) }
         errorMessage = nil
         isRunning = true
+        // 平台事件写进日志页：一页都没跑起来时，先看日志里「模型未就绪」还是「引擎创建失败」。
+        VLOCRLogging.note("平台：收到 \(images.count) 张图片，开始逐页识别（运行方式 \(store.mode.title)）")
         Task { await run(store: store, host: host) }
     }
 
@@ -59,12 +61,16 @@ final class RecognizeViewModel: ObservableObject {
                         }
                     }.value
                     items[index].status = .done(output)
+                    VLOCRLogging.note("平台：第 \(index + 1)/\(items.count) 页完成，用时 \(String(format: "%.2f", output.seconds)) s")
                 } catch {
                     items[index].status = .failed(error.localizedDescription)
+                    VLOCRLogging.note("平台：第 \(index + 1)/\(items.count) 页失败 —— \(error.localizedDescription)",
+                                      level: .error)
                 }
             }
         } catch {
             errorMessage = error.localizedDescription
+            VLOCRLogging.note("平台：识别未开始 —— \(error.localizedDescription)", level: .error)
             for index in items.indices {
                 if case .pending = items[index].status {
                     items[index].status = .failed("未执行")

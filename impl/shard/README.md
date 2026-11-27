@@ -58,8 +58,14 @@ char *vlcore_layout_json(engine, rgb, w, h, &err);           // 只做版面
 char *vlcore_recognize_block(engine, rgb, w, h, label, &err); // 单块
 char *vlcore_prompt_for_label(label);
 void  vlcore_set_remote(engine, fn, user);                   // 远程识别回调
+void  vlcore_set_log(fn, user);                              // 全局日志 sink（NULL 卸载）
+void  vlcore_log(level, message);                            // 平台侧补一行日志
 int   vlcore_layout_engine_built(void);
 ```
+
+日志约定：`level` 0/1/2/3 = 调试/信息/警告/错误（与 `vlcore::LogLevel` 同值）。装了 sink 之后，
+核心编排（版面后处理、逐块耗时与失败原因）与 llama.cpp / ggml 自己的输出会一起走这条通道；
+**没装 sink 时是空实现**，不产生额外开销。iOS 把它接到 App 内「日志」页，Android 可接 logcat。
 
 约定：返回的 `char*` 由调用方 `vlcore_free_string`；`error` 也是 malloc 的 UTF-8 文本；
 输入图像是紧排 RGB（`width*height*3`）。整页结果：

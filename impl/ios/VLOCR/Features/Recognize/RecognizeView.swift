@@ -92,9 +92,16 @@ struct RecognizeView: View {
     }
 
     private func errorCard(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-            Text(message).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                Text(message).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            // 技术细节（llama.cpp 的真实报错、token 数、上下文数值）只在日志页出现，
+            // 这里给一句指路，避免用户只能盯着这句兜底文案。
+            Text("详细原因见「日志」tab，可直接复制或导出。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding(12)
         .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))

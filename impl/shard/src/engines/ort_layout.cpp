@@ -31,6 +31,9 @@
 #endif
 #endif
 
+#include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -63,6 +66,22 @@ std::wstring ToOrtPath(const std::string& path) {
 
 #if defined(VLCORE_ORT_ENABLED)
 
+/// 两位小数的秒数，日志里统一格式。
+std::string Format(double seconds) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.2f", seconds);
+    return std::string(buffer);
+}
+
+std::string Join(const std::vector<std::string>& items) {
+    std::string out;
+    for (const std::string& item : items) {
+        if (!out.empty()) out += ", ";
+        out += item;
+    }
+    return out;
+}
+
 bool Ok(const OrtApi* api, OrtStatus* status, std::string* error) {
     if (status == nullptr) return true;
     const char* raw = api->GetErrorMessage(status);
@@ -83,6 +102,7 @@ public:
     }
 
     bool Init(const std::string& path, std::string* error) {
+        const auto started = std::chrono::steady_clock::now();
         if (!Ok(api_, api_->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "vlcore-layout", &env_), error)) return false;
         if (!Ok(api_, api_->CreateSessionOptions(&options_), error)) return false;
         api_->SetIntraOpNumThreads(options_, 4);
@@ -94,7 +114,12 @@ public:
         if (!Ok(api_, api_->CreateSession(env_, path.c_str(), options_, &session_), error)) return false;
 #endif
         if (!Ok(api_, api_->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_), error)) return false;
-        return ReadIoSpec(error);
+        if (!ReadIoSpec(error)) return false;
+        const double seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        LogLine(kLogInfo, "版面模型就绪：输入 [" + Join(input_names_) + "]，输出 " + output_name_ +
+                              "，用时 " + Format(seconds) + " s（CPU EP，4 线程）");
+        return true;
     }
 
     bool Run(const LayoutInput& input, int image_width, int image_height,
@@ -144,9 +169,12 @@ public:
                 break;
             }
 
+            const auto started = std::chrono::steady_clock::now();
             const char* output_name = output_name_.c_str();
             if (!Ok(api_, api_->Run(session_, nullptr, names.data(), values.data(), names.size(),
                                     &output_name, 1, &output), error)) break;
+            const double seconds =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
 
             OrtTensorTypeAndShapeInfo* info = nullptr;
             if (!Ok(api_, api_->GetTensorTypeAndShape(output, &info), error)) break;
@@ -160,6 +188,28 @@ public:
 
             const float* data = static_cast<const float*>(raw);
             rows->assign(data, data + count);
+
+            // 把「最高分那条查询的原始数值」记进日志：判断坐标是 letterbox 空间还是已反算回原图、
+            // 以及输入归一化是否对得上，全靠这几个数（分数整体偏低同样是预处理的信号）。
+            const size_t row_count = count / 7;
+            size_t best = 0;
+            for (size_t i = 1; i < row_count; i++) {
+                if (data[i * 7 + 1] > data[best * 7 + 1]) best = i;
+            }
+            std::string top = row_count > 0 ? "，最高分 " : "，无查询输出";
+            if (row_count > 0) {
+                const float* row = data + best * 7;
+                top += Format(static_cast<double>(row[1])) +
+                       "（cls=" + std::to_string(static_cast<int>(std::lround(row[0]))) +
+                       "，框=" + Format(static_cast<double>(row[2])) + "," +
+                       Format(static_cast<double>(row[3])) + "," +
+                       Format(static_cast<double>(row[4])) + "," +
+                       Format(static_cast<double>(row[5])) + "，order=" +
+                       Format(static_cast<double>(row[6])) + "，scale=1/" +
+                       Format(1.0 / (input.scale > 0.f ? input.scale : 1.f)) + "）";
+            }
+            LogLine(kLogInfo, "版面推理完成：用时 " + Format(seconds) + " s，" +
+                                  std::to_string(row_count) + " 条查询" + top);
             success = true;
         } while (false);
 

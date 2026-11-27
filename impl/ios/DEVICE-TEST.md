@@ -128,9 +128,11 @@ App 已开启 `UIFileSharingEnabled`，iTunes 里能看到它的 Documents。
 | 6 | 结果页 Markdown | 标题带 `#`、正文分段、表格/公式保留原文 |
 | 7 | 结果页「版面块」 | `label` 是 `doc_title`/`text`/`table` 等，`order` 从 1 连续 |
 | 8 | 耗时 | 单页几十秒量级（0.9B 端侧模型，块越多越慢） |
+| 9 | 日志 tab | 有环境头（机型 / iOS / 预设 / 引擎链接状态）、逐块耗时与 llama.cpp 输出；「复制全部」「导出 / 下载」都可用 |
 
-抓日志（Windows）：iTunes 不行，用 `Console`（需 Mac）或装 `3uTools` 看崩溃日志；
-更简单的是先在 App 里看错误文案——UI 已把引擎错误原样显示在识别页红框里。
+抓日志（Windows）：优先用 App 内**日志 tab**（`⋯ → 复制全部 / 导出 / 下载`），
+这里能看到 llama.cpp 自己的报错行（Metal 分配、KV 槽位、mmproj 不匹配）；
+iTunes 看不到运行日志，装 `3uTools` 只能看崩溃日志。
 
 ## 6. 快速路径：只验链路，不带本地 VLM
 
@@ -160,6 +162,7 @@ llama-server -m PaddleOCR-VL-1.6-GGUF.gguf --mmproj PaddleOCR-VL-1.6-GGUF-mmproj
 | 设置页显示「引擎 未链接」 | 该 ipa 是不含对应引擎的构建（`with_llama=false`），不是 bug |
 | 设置页三行都「未选择」 | 模型没传进 App；iTunes 传完后点「重新扫描 Documents 目录」 |
 | 识别报「视觉语言模型加载失败」 | GGUF 架构 `paddleocr` 需要较新的 llama.cpp；改 `LLAMA_CACHE_KEY` 重建 |
+| 整页全部「提示词推理失败」 | 到「日志」tab 按 `错误` 筛：看是 `视觉编码失败`（视觉塔后端 / mmproj 版本）还是 `图像 chunk 解码失败 rc=…`（显存 / n_ctx / n_batch 不够），日志里带 token 数与上下文数值 |
 | 识别报「版面模型输入名不是 PaddleX 导出形态」 | ONNX 不是 `image/im_shape/scale_factor` 三输入，重新导出 |
 | 版面框整体错位 | 用 `tools/verify_layout_onnx.py` 在桌面复核；桌面也错位才是模型/导出问题 |
 | 7 天后打不开 | 免费证书过期，重新签名安装 |

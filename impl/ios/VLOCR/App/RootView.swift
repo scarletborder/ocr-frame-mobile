@@ -1,6 +1,6 @@
 //
 //  RootView.swift
-//  底部导航：识别 / 设置。
+//  底部导航：识别 / 设置 / 日志。
 //
 
 import SwiftUI
@@ -15,6 +15,10 @@ struct RootView: View {
             SettingsView()
                 .tabItem {
                     Label("设置", systemImage: "gearshape")
+                }
+            LogsView()
+                .tabItem {
+                    Label("日志", systemImage: "doc.text.magnifyingglass")
                 }
         }
     }

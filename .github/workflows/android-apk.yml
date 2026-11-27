@@ -33,7 +33,7 @@ jobs:
       # 想强制重建 llama.cpp 的 native 产物（例如上游 mtmd API 变了），把这个 key 改一下
       LLAMA_CACHE_KEY: llama-master-v1
       ORT_ANDROID_VERSION: "1.22.0"
-      NDK_VERSION: "27.0.12077973"
+      CMAKE_VERSION: "3.31.5"
 
     steps:
       - uses: actions/checkout@v4
@@ -52,8 +52,18 @@ jobs:
 
       - name: Android SDK 工具
         uses: android-actions/setup-android@v3
+        with:
+          # action 默认值含已废弃的 `tools` 包；sdkmanager 16 会直接失败。
+          # 且 ubuntu 镜像已预装 platform-tools / NDK / CMake，无需它再装任何东西。
+          packages: ""
 
-      - name: 安装 platform / NDK / CMake
+      - name: 对齐 runner 预装版本
+        run: |
+          NDK_DIR="$(basename "${ANDROID_NDK_HOME%/}")"
+          echo "NDK_VERSION=${NDK_DIR}" >> "$GITHUB_ENV"
+          echo "NDK_VERSION=${NDK_DIR}"
+
+      - name: 安装 platform / build-tools / CMake
         run: |
           # `yes` 被 SIGPIPE 中断会让 pipefail 判定失败，这里显式忽略
           yes | sdkmanager --licenses > /dev/null || true
@@ -61,8 +71,7 @@ jobs:
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.1" \
-            "ndk;${NDK_VERSION}" \
-            "cmake;3.22.1"
+            "cmake;${CMAKE_VERSION}"
 
       - name: 缓存 llama.cpp 源码
         if: ${{ inputs.with_llama != false }}
@@ -99,6 +108,9 @@ jobs:
 
       - name: 构建 release APK
         working-directory: impl/android
+        env:
+          ANDROID_NDK_VERSION: ${{ env.NDK_VERSION }}
+          ANDROID_CMAKE_VERSION: ${{ env.CMAKE_VERSION }}
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: 上传 APK

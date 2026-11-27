@@ -97,6 +97,29 @@ struct LayoutParams {
     float pseudo_page_portrait{0.93f};
 };
 
+// ---- 日志 ----
+
+/// 日志级别。数值与 vlcore_c.h 的 int 常量一致（0 调试 / 1 信息 / 2 警告 / 3 错误），
+/// 平台侧按「≥ 某级别」筛选用得上大小关系。
+enum LogLevel {
+    kLogDebug = 0,
+    kLogInfo = 1,
+    kLogWarn = 2,
+    kLogError = 3,
+};
+
+/// 日志 sink：message 只在该回调内有效，回调可能来自任意线程，实现必须自己保证线程安全。
+using LogSink = void (*)(int level, const char* message, void* user);
+
+/// 安装/卸载（sink=nullptr）全局日志 sink。未安装时 LogLine 是空操作，不产生任何开销之外的副作用。
+void SetLogSink(LogSink sink, void* user);
+
+/// 是否装了 sink。热路径上想拼字符串前可以先判断，避免无谓的格式化。
+bool LogActive();
+
+/// 写一行日志（不要带换行符）。
+void LogLine(LogLevel level, const std::string& text);
+
 // ---- 图像 ----
 
 /// letterbox 到 800x800（右下补 114）并归一化成 CHW。补边在右下，反算只需除以 scale。

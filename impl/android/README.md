@@ -47,7 +47,7 @@ impl/android/
 
 ## 3. 环境
 
-- JDK 17、Gradle 8.9+、Android SDK `platform 35`、**NDK `27.0.12077973`**（已在 `app/build.gradle.kts` 钉住）、CMake 3.22.1
+- JDK 17、Gradle 8.9+、Android SDK `platform 35`、NDK 27.x（CI 使用 runner 预装版本）、CMake 3.22+（CI 使用 3.31.5）
 - 真机 arm64（0.9B 权重 + ONNX Runtime 只在真机上有意义），minSdk 26
 
 ## 4. 构建

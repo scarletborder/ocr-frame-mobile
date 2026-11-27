@@ -234,6 +234,16 @@ static char *VLOCRRemoteCallback(const uint8_t *rgb, int width, int height,
     self = [super init];
     if (self == nil) return nil;
 
+    // 平台事件也进同一路日志：日志页里能看出「引擎是怎么建的、用了哪几个文件」。
+    NSString *started = [NSString stringWithFormat:
+        @"平台：创建引擎（版面 %@，VLM %@，投影器 %@，n_ctx=8192，threads=4）",
+        layoutPath.lastPathComponent.length > 0 ? layoutPath.lastPathComponent : @"无",
+        vlmPath.lastPathComponent.length > 0 ? vlmPath.lastPathComponent : @"无",
+        mmprojPath.lastPathComponent.length > 0 ? mmprojPath.lastPathComponent : @"无"];
+    const char *startedUTF8 = started.UTF8String;
+    if (startedUTF8 != nullptr) vlcore_log(1, startedUTF8);
+
+    const NSTimeInterval created = [NSDate timeIntervalSinceReferenceDate];
     char *message = nullptr;
     _engine = vlcore_create(layoutPath.length > 0 ? layoutPath.fileSystemRepresentation : nullptr,
                             vlmPath.length > 0 ? vlmPath.fileSystemRepresentation : nullptr,
@@ -243,6 +253,11 @@ static char *VLOCRRemoteCallback(const uint8_t *rgb, int width, int height,
         VLOCRSetError(error, message, @"识别引擎初始化失败。");
         return nil;
     }
+
+    NSString *ok = [NSString stringWithFormat:@"平台：引擎创建完成，用时 %.2f s",
+                                              [NSDate timeIntervalSinceReferenceDate] - created];
+    const char *okUTF8 = ok.UTF8String;
+    if (okUTF8 != nullptr) vlcore_log(1, okUTF8);
     return self;
 }
 
@@ -269,6 +284,7 @@ static char *VLOCRRemoteCallback(const uint8_t *rgb, int width, int height,
         return nil;
     }
 
+    const NSTimeInterval decodeStarted = [NSDate timeIntervalSinceReferenceDate];
     std::vector<uint8_t> rgb;
     int width = 0;
     int height = 0;
@@ -276,6 +292,13 @@ static char *VLOCRRemoteCallback(const uint8_t *rgb, int width, int height,
         if (error != nullptr) *error = VLOCRError(@"图片无法解码，请重新拍摄或选择。");
         return nil;
     }
+
+    // 大图解码（最多 1200 万像素）本身就要时间，单独记一行，免得被算进「识别慢」。
+    NSString *decoded = [NSString stringWithFormat:@"平台：图片解码 %dx%d，用时 %.2f s",
+                                                   width, height,
+                                                   [NSDate timeIntervalSinceReferenceDate] - decodeStarted];
+    const char *decodedUTF8 = decoded.UTF8String;
+    if (decodedUTF8 != nullptr) vlcore_log(1, decodedUTF8);
 
     char *message = nullptr;
     char *json = vlcore_run(_engine, rgb.data(), width, height,

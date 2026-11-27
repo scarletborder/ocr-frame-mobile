@@ -32,6 +32,14 @@ std::string Safe(const char* text) {
     return text != nullptr ? std::string(text) : std::string();
 }
 
+/// 日志里只留文件名：完整沙盒路径对排查没用，还会把日志页刷满。
+std::string BaseName(const char* path) {
+    const std::string text = Safe(path);
+    if (text.empty()) return "（未选择）";
+    const size_t slash = text.find_last_of("/\\");
+    return slash == std::string::npos ? text : text.substr(slash + 1);
+}
+
 bool ToBuffer(const uint8_t* rgb, int width, int height, vlcore::RgbBuffer* out) {
     if (rgb == nullptr || width <= 0 || height <= 0) return false;
     const size_t size = static_cast<size_t>(width) * static_cast<size_t>(height) * 3;
@@ -64,13 +72,23 @@ vlcore_engine_t* vlcore_create(const char* layout_onnx_path, const char* vlm_ggu
                                char** error) {
     std::string message;
 
+    vlcore::LogLine(vlcore::kLogInfo,
+                    "引擎创建：n_ctx=" + std::to_string(n_ctx) +
+                        "，threads=" + std::to_string(n_threads) +
+                        "，版面=" + BaseName(layout_onnx_path) +
+                        "，VLM=" + BaseName(vlm_gguf_path) +
+                        "，投影器=" + BaseName(mmproj_gguf_path));
+
     std::unique_ptr<vlcore::LayoutEngine> layout;
     if (layout_onnx_path != nullptr && layout_onnx_path[0] != '\0') {
         layout.reset(vlcore::CreateOrtLayoutEngine(layout_onnx_path, &message));
         if (layout == nullptr) {
+            vlcore::LogLine(vlcore::kLogError, "版面引擎创建失败：" +
+                                                   (message.empty() ? "未知原因" : message));
             SetError(error, message.empty() ? "版面分析模型加载失败。" : message);
             return nullptr;
         }
+        vlcore::LogLine(vlcore::kLogInfo, "版面引擎已就绪。");
     }
 
     std::unique_ptr<vlcore::VlmEngine> vlm;
@@ -78,9 +96,12 @@ vlcore_engine_t* vlcore_create(const char* layout_onnx_path, const char* vlm_ggu
         vlm.reset(vlcore::CreateMtmdEngine(vlm_gguf_path, Safe(mmproj_gguf_path),
                                            n_ctx, n_threads, &message));
         if (vlm == nullptr) {
+            vlcore::LogLine(vlcore::kLogError, "VLM 引擎创建失败：" +
+                                                   (message.empty() ? "未知原因" : message));
             SetError(error, message.empty() ? "视觉语言模型加载失败。" : message);
             return nullptr;
         }
+        vlcore::LogLine(vlcore::kLogInfo, "VLM 引擎已就绪。");
     }
 
     auto* engine = new vlcore_engine();
@@ -122,14 +143,25 @@ char* vlcore_run(vlcore_engine_t* engine, const uint8_t* rgb, int width, int hei
     double seconds = 0.0;
     std::string message;
 
+    vlcore::LogLine(vlcore::kLogInfo,
+                    "开始整页识别：" + std::to_string(width) + "x" + std::to_string(height));
+
     const std::function<void(int, int)> on_progress = [progress, user](int done, int total) {
         if (progress != nullptr) progress(done, total, user);
     };
 
     if (!engine->pipeline->Run(page, on_progress, &markdown, &blocks, &seconds, &message)) {
+        vlcore::LogLine(vlcore::kLogError, "整页识别失败：" +
+                                               (message.empty() ? "未知原因" : message));
         SetError(error, message.empty() ? "识别失败。" : message);
         return nullptr;
     }
+
+    char seconds_text[32];
+    std::snprintf(seconds_text, sizeof(seconds_text), "%.2f", seconds);
+    vlcore::LogLine(vlcore::kLogInfo,
+                    "整页识别完成：用时 " + std::string(seconds_text) + " s，" +
+                        std::to_string(blocks.size()) + " 个版面块");
     return Duplicate(RunResultJson(markdown, blocks, seconds));
 }
 
@@ -205,6 +237,20 @@ const char* vlcore_pipeline_version(void) {
 
 int vlcore_max_new_tokens(void) {
     return vlcore::Preset::kMaxNewTokens;
+}
+
+void vlcore_set_log(vlcore_log_fn fn, void* user) {
+    if (fn == nullptr) {
+        vlcore::SetLogSink(nullptr, nullptr);
+        return;
+    }
+    // 两个回调类型签名一致（int, const char*, void*），都走 C ABI，可直接转换。
+    vlcore::SetLogSink(reinterpret_cast<vlcore::LogSink>(fn), user);
+}
+
+void vlcore_log(int level, const char* message) {
+    const int clamped = level < 0 ? 0 : (level > 3 ? 3 : level);
+    vlcore::LogLine(static_cast<vlcore::LogLevel>(clamped), Safe(message));
 }
 
 void vlcore_free_string(char* text) {

@@ -18,6 +18,20 @@ typedef struct vlcore_engine vlcore_engine_t;
 
 typedef void (*vlcore_progress_fn)(int done, int total, void *user);
 
+/* 日志回调。level: 0=调试 1=信息 2=警告 3=错误。
+ *
+ * message 只在该回调内有效（不要保存指针）；回调可能来自任意线程（推理线程、llama.cpp
+ * 内部线程），实现必须自己保证线程安全。未安装 sink 时核心不产生任何日志开销。 */
+typedef void (*vlcore_log_fn)(int level, const char *message, void *user);
+
+/* 安装全局日志 sink（进程内一次即可；fn 传 NULL 表示卸载）。
+ * Android 可转 logcat，iOS 转 App 内「日志」页。 */
+void vlcore_set_log(vlcore_log_fn fn, void *user);
+
+/* 平台侧往同一路日志里补一行（例如「引擎创建参数」「开始识别 WxH」），
+ * 让日志页里平台事件与核心事件按时间交错，便于定位卡在哪一段。 */
+void vlcore_log(int level, const char *message);
+
 /* 远程识别回调：返回 malloc 的文本（核心负责 free）；失败返回 NULL 并填 *error。 */
 typedef char *(*vlcore_remote_fn)(const uint8_t *rgb, int width, int height,
                                   const char *prompt, void *user, char **error);
